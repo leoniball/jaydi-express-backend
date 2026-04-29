@@ -2,36 +2,88 @@ import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/producto_carrito.dart';
 import '../models/idiomas.dart';
+import '../services/api_service.dart'; // <--- IMPORTANTE: Importamos tu nuevo servicio
 import 'home_screen.dart'; 
 import 'auth_screen.dart'; 
 
 class CarritoScreen extends StatelessWidget {
   const CarritoScreen({super.key});
 
-  // FINALIZAR COMPRA Y LIMPIAR DISCO
+ // FINALIZAR COMPRA Y ENVIAR A RENDER/NEON
   Future<void> _finalizarCompraReal(BuildContext context, String lang, double totalFinal) async {
     final prefs = await SharedPreferences.getInstance();
-    String? userId = prefs.getString('ultimo_usuario_activo');
-    if (userId == null || userId == "Invitado") return;
-
-    String historialKey = 'historial_jaydi_$userId';
-    List<String> historialActual = prefs.getStringList(historialKey) ?? [];
-    String fecha = DateTime.now().toString().substring(0, 16);
-    historialActual.add("Fecha: $fecha | Total: \$${totalFinal.toStringAsFixed(2)}");
     
-    await prefs.setStringList(historialKey, historialActual);
+    int usuarioId = prefs.getInt('user_id_neon') ?? 0; 
+    String? userIdPref = prefs.getString('ultimo_usuario_activo');
     
-    // --- LIMPIEZA TOTAL ---
-    carritoNotifier.value = [];
-    await prefs.remove('carrito_save_$userId'); // Borramos el carrito pendiente porque ya se compró
+    if (userIdPref == null || userIdPref == "Invitado") {
+      // ✅ Agregamos el check de 'mounted' antes de usar el ScaffoldMessenger
+      if (!context.mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(content: Text("Debes iniciar sesión para comprar")));
+      return;
+    }
 
+    List productosParaEnviar = carritoNotifier.value.map((item) => {
+      'nombre': item.nombre,
+      'cantidad': item.cantidad,
+      'precio': item.precio,
+    }).toList();
+
+    // ✅ Check de mounted antes de mostrar el diálogo de carga
     if (!context.mounted) return;
-    ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text("¡Compra realizada con éxito!"), backgroundColor: Colors.green));
-    Navigator.pop(context);
+    showDialog(
+      context: context,
+      barrierDismissible: false,
+      builder: (context) => const Center(child: CircularProgressIndicator()),
+    );
+
+    bool exitoServidor = await ApiService.finalizarCompra(
+      usuarioId: usuarioId,
+      direccion: "Urbanización Simón Bolívar, Bloque 1", 
+      total: totalFinal,
+      productos: productosParaEnviar,
+    );
+
+    // ✅ Check de mounted después de la petición al servidor
+    if (!context.mounted) return;
+    Navigator.pop(context); // Quitar el círculo de carga
+
+    if (exitoServidor) {
+      String historialKey = 'historial_jaydi_$userIdPref';
+      List<String> historialActual = prefs.getStringList(historialKey) ?? [];
+      String fecha = DateTime.now().toString().substring(0, 16);
+      historialActual.add("Fecha: $fecha | Total: \$${totalFinal.toStringAsFixed(2)}");
+      
+      await prefs.setStringList(historialKey, historialActual);
+      
+      carritoNotifier.value = [];
+      await prefs.remove('carrito_save_$userIdPref');
+if (exitoServidor) {
+      // ... tus líneas de historial y limpieza ...
+      
+      // ✅ JUSTO ANTES DE MOSTRAR EL SNACKBAR Y EL POP, AGREGA ESTO:
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("¡Pedido enviado a Jaydi Server con éxito!"), 
+        backgroundColor: Colors.green
+      ));
+      Navigator.pop(context);
+      }
+    } else {
+      // ✅ TAMBIÉN AQUÍ ANTES DEL SNACKBAR DE ERROR:
+      if (!context.mounted) return;
+
+      ScaffoldMessenger.of(context).showSnackBar(const SnackBar(
+        content: Text("Error al conectar con el servidor. Reintenta."), 
+        backgroundColor: Colors.red
+      ));
+    }
   }
 
   @override
   Widget build(BuildContext context) {
+    // ... Todo el código de build se mantiene exactamente igual ...
     return ValueListenableBuilder<String>(
       valueListenable: idiomaGlobal,
       builder: (context, lang, _) {
@@ -68,7 +120,7 @@ class CarritoScreen extends StatelessWidget {
                                 var n = List<ProductoCarrito>.from(carritoNotifier.value);
                                 n[i] = item.copyWith(cantidad: item.cantidad - 1);
                                 carritoNotifier.value = n;
-                                guardarCarritoEnDisco(); // <--- ACTUALIZAR DISCO
+                                guardarCarritoEnDisco();
                               }
                             }),
                             Padding(padding: const EdgeInsets.symmetric(horizontal: 15), child: Text("${item.cantidad}", style: const TextStyle(fontWeight: FontWeight.bold))),
@@ -76,7 +128,7 @@ class CarritoScreen extends StatelessWidget {
                               var n = List<ProductoCarrito>.from(carritoNotifier.value);
                               n[i] = item.copyWith(cantidad: item.cantidad + 1);
                               carritoNotifier.value = n;
-                              guardarCarritoEnDisco(); // <--- ACTUALIZAR DISCO
+                              guardarCarritoEnDisco();
                             }),
                           ])
                         ])),
@@ -85,7 +137,7 @@ class CarritoScreen extends StatelessWidget {
                             var n = List<ProductoCarrito>.from(carritoNotifier.value);
                             n.removeAt(i);
                             carritoNotifier.value = n;
-                            guardarCarritoEnDisco(); // <--- ACTUALIZAR DISCO
+                            guardarCarritoEnDisco();
                           }),
                           Text("\$${(item.precio * item.cantidad).toStringAsFixed(2)}", style: const TextStyle(fontWeight: FontWeight.w900, color: Color(0xFF1565C0))),
                         ])

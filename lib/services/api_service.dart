@@ -5,7 +5,7 @@ import 'package:flutter/foundation.dart';
 class ApiService {
   // IP especial para que el emulador de Android vea tu Lenovo
   // LA URL DE ORO:
-static const String baseUrl = 'https://jaydi-server.onrender.com';
+  static const String baseUrl = 'https://jaydi-delivery-serverv.onrender.com';
 
   // --- 1. FUNCIÓN PARA REGISTRAR ---
   static Future<bool> registrarUsuario(String nombre, String email, String password) async {
@@ -84,6 +84,42 @@ static const String baseUrl = 'https://jaydi-server.onrender.com';
     } catch (e) {
       debugPrint("❌ ERROR DE CONEXIÓN AL TRAER PRODUCTOS: $e");
       return [];
+    }
+  }
+
+  // --- 4. FUNCIÓN PARA FINALIZAR COMPRA (NUEVA ACTULIZACIÓN) ---
+  static Future<bool> finalizarCompra({
+    required int usuarioId,
+    required String direccion,
+    required double total,
+    required List productos,
+  }) async {
+    final url = Uri.parse('$baseUrl/finalizar_pedido');
+
+    try {
+      debugPrint("🛒 Enviando pedido a Render...");
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'usuario_id': usuarioId,
+          'direccion_entrega': direccion,
+          'total': total,
+          'productos': productos, // Aquí mandamos la lista de lo que hay en el carrito
+          'estado': 'pendiente',   // Por defecto entra como pendiente
+        }),
+      );
+
+      if (response.statusCode == 201) {
+        debugPrint("✅ PEDIDO REALIZADO: Ya aparece en Neon");
+        return true;
+      } else {
+        debugPrint("❌ ERROR AL CREAR PEDIDO: ${response.body}");
+        return false;
+      }
+    } catch (e) {
+      debugPrint("❌ ERROR DE CONEXIÓN AL FINALIZAR PEDIDO: $e");
+      return false;
     }
   }
 }
