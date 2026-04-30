@@ -1,5 +1,5 @@
 import os
-from flask import Flask, jsonify, request
+from flask import Flask, jsonify, request, render_template
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -28,6 +28,8 @@ class Usuario(db.Model):
     email = db.Column(db.String(120), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False) 
     rol = db.Column(db.String(20), default='cliente')
+    verificado = db.Column(db.Boolean, default=False) # Para el Panel Admin
+    saldo = db.Column(db.Float, default=0.0)         # Para el Panel Admin
 
 class Comercio(db.Model):
     __tablename__ = 'comercio'
@@ -63,11 +65,53 @@ with app.app_context():
     db.create_all()
     print("¡Base de Datos de Neon Sincronizada!")
 
-# --- RUTAS ---
+# --- RUTAS DE NAVEGACIÓN ---
 
 @app.route('/')
 def index():
     return jsonify({"mensaje": "Servidor de Jaydi Express funcionando 24/7"})
+
+@app.route('/admin')
+def admin_page():
+    """Sirve el archivo HTML del panel de administración"""
+    return render_template('admin_panel.html')
+
+# --- API DE ADMINISTRACIÓN ---
+
+@app.route('/admin/api/repartidores', methods=['GET'])
+def api_repartidores():
+    """Devuelve la lista de usuarios para el Panel Admin"""
+    try:
+        usuarios = Usuario.query.all()
+        resultado = []
+        for u in usuarios:
+            resultado.append({
+                "id": u.id,
+                "nombre": u.nombre,
+                "correo": u.email,
+                "saldo": u.saldo or 0.0,
+                "es_verificado": u.verificado,
+                "ultima_conexion": None # Opcional: datetime.utcnow().isoformat()
+            })
+        return jsonify(resultado), 200
+    except Exception as e:
+        return jsonify({"mensaje": str(e)}), 500
+
+@app.route('/admin/aprobar/<int:user_id>', methods=['POST'])
+def aprobar_repartidor(user_id):
+    """Aprueba a un repartidor desde el Panel Admin"""
+    try:
+        u = Usuario.query.get(user_id)
+        if u:
+            u.verificado = True
+            db.session.commit()
+            return jsonify({"status": "success", "message": "Aprobado"}), 200
+        return jsonify({"mensaje": "Usuario no encontrado"}), 404
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"mensaje": str(e)}), 500
+
+# --- RUTAS DE LA APP (LOGIN, REGISTRO, PRODUCTOS) ---
 
 @app.route('/registrar', methods=['POST'])
 def registrar():
@@ -109,7 +153,7 @@ def login():
         else:
             return jsonify({"mensaje": "Correo o contraseña incorrectos"}), 401
     except Exception as e:
-        return jsonify({"mensaje": "Error interno del servidor"}), 500
+        return jsonify({"mensaje": "Error interno"}), 500
 
 @app.route('/productos', methods=['GET'])
 def obtener_productos():
@@ -118,12 +162,8 @@ def obtener_productos():
         resultado = []
         for p in productos:
             resultado.append({
-                "id": p.id,
-                "nombre": p.nombre,
-                "descripcion": p.descripcion,
-                "precio": p.precio,
-                "stock": p.stock,
-                "imagen": p.imagen_url,
+                "id": p.id, "nombre": p.nombre, "descripcion": p.descripcion,
+                "precio": p.precio, "stock": p.stock, "imagen": p.imagen_url,
                 "comercio": p.comercio.nombre 
             })
         return jsonify(resultado), 200
@@ -134,11 +174,9 @@ def obtener_productos():
 def finalizar_pedido():
     try:
         datos = request.json
-        # CORRECCIÓN AQUÍ: Buscamos el ID del usuario de varias formas por si Flutter lo manda distinto
         u_id = datos.get('usuario_id') or datos.get('id_usuario') or datos.get('id')
-        
         if not u_id:
-            return jsonify({"mensaje": "Falta el ID del usuario"}), 400
+            return jsonify({"mensaje": "Falta ID"}), 400
 
         nuevo_pedido = Pedido(
             id_usuario=u_id,
@@ -151,8 +189,6 @@ def finalizar_pedido():
         return jsonify({"mensaje": "Pedido guardado con éxito", "pedido_id": nuevo_pedido.id}), 201
     except Exception as e:
         db.session.rollback()
-        # Esto imprimirá el error real en los logs de Render
-        print(f"Error en finalizar_pedido: {str(e)}") 
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/pedidos_disponibles', methods=['GET'])
@@ -162,30 +198,12 @@ def pedidos_disponibles():
         resultado = []
         for ped in pedidos:
             resultado.append({
-                "id": ped.id,
-                "direccion": ped.direccion_entrega,
-                "total": ped.total,
-                "estado": ped.estado,
+                "id": ped.id, "direccion": ped.direccion_entrega,
+                "total": ped.total, "estado": ped.estado,
                 "fecha": ped.fecha_creacion.strftime("%Y-%m-%d %H:%M:%S")
             })
         return jsonify(resultado), 200
     except Exception as e:
-        return jsonify({"mensaje": str(e)}), 500
-
-@app.route('/aceptar_pedido', methods=['POST'])
-def aceptar_pedido():
-    try:
-        datos = request.json
-        p_id = datos.get('pedido_id') or datos.get('id')
-        p = Pedido.query.get(p_id)
-        if p:
-            p.estado = 'aceptado'
-            p.repartidor_id = datos.get('repartidor_id')
-            db.session.commit()
-            return jsonify({"mensaje": "Pedido aceptado"}), 200
-        return jsonify({"mensaje": "Pedido no encontrado"}), 404
-    except Exception as e:
-        db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/seed', methods=['GET'])
@@ -193,17 +211,13 @@ def seed_data():
     try:
         if Comercio.query.filter_by(rif="J-12345678-0").first():
             return jsonify({"mensaje": "Los datos ya existen"}), 200
-
-        nuevo_comercio = Comercio(nombre="Farmatodo", rif="J-12345678-0", direccion="Av. Principal, Los Teques", categoria="Farmacia")
+        nuevo_comercio = Comercio(nombre="Farmatodo", rif="J-12345678-0", direccion="Av. Principal", categoria="Farmacia")
         db.session.add(nuevo_comercio)
         db.session.flush()
-
-        p1 = Producto(nombre="Acetaminofén 500mg", precio=2.50, stock=50, comercio_id=nuevo_comercio.id)
-        p2 = Producto(nombre="Agua Mineral 1L", precio=1.00, stock=100, comercio_id=nuevo_comercio.id)
-
-        db.session.add_all([p1, p2])
+        p1 = Producto(nombre="Acetaminofén", precio=2.50, stock=50, comercio_id=nuevo_comercio.id)
+        db.session.add(p1)
         db.session.commit()
-        return jsonify({"mensaje": "¡Datos de prueba creados!"}), 201
+        return jsonify({"mensaje": "¡Datos creados!"}), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
