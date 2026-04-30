@@ -6,6 +6,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
 app = Flask(__name__)
+# Habilitamos CORS para que las apps de Flutter puedan conectarse sin bloqueos
 CORS(app)
 
 # --- CONFIGURACIÓN DE LA BASE DE DATOS (NEON) ---
@@ -22,6 +23,7 @@ db = SQLAlchemy(app)
 # --- MODELOS DE DATOS ---
 
 class Usuario(db.Model):
+    __tablename__ = 'usuario'
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(100), nullable=False)
     email = db.Column(db.String(120), unique=True, nullable=False)
@@ -29,6 +31,7 @@ class Usuario(db.Model):
     rol = db.Column(db.String(20), default='cliente')
 
 class Comercio(db.Model):
+    __tablename__ = 'comercio'
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(100), nullable=False)
     rif = db.Column(db.String(20), unique=True)
@@ -37,6 +40,7 @@ class Comercio(db.Model):
     productos = db.relationship('Producto', backref='comercio', lazy=True)
 
 class Producto(db.Model):
+    __tablename__ = 'producto'
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(150), nullable=False)
     descripcion = db.Column(db.Text)
@@ -46,21 +50,19 @@ class Producto(db.Model):
     codigo_barras = db.Column(db.String(50), unique=True)
     comercio_id = db.Column(db.Integer, db.ForeignKey('comercio.id'), nullable=False)
 
-# --- NUEVO MODELO PARA PEDIDOS (Conexión Express -> Delivery) ---
 class Pedido(db.Model):
     __tablename__ = 'pedidos'
     id = db.Column(db.Integer, primary_key=True)
     id_usuario = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=False)
     direccion_entrega = db.Column(db.Text, nullable=False)
     total = db.Column(db.Float, nullable=False)
-    # Estados: 'pendiente', 'listo_para_entrega', 'aceptado', 'entregado'
     estado = db.Column(db.String(50), default='pendiente')
     repartidor_id = db.Column(db.Integer, nullable=True)
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
 
 with app.app_context():
     db.create_all()
-    print("¡Tablas sincronizadas (incluyendo Pedidos)!")
+    print("¡Base de Datos de Neon Sincronizada!")
 
 # --- RUTAS ---
 
@@ -87,6 +89,7 @@ def registrar():
         db.session.commit()
         return jsonify({"mensaje": "Usuario creado con éxito"}), 201
     except Exception as e:
+        db.session.rollback()
         return jsonify({"mensaje": str(e)}), 400
 
 @app.route('/login', methods=['POST'])
@@ -107,7 +110,7 @@ def login():
         else:
             return jsonify({"mensaje": "Correo o contraseña incorrectos"}), 401
     except Exception as e:
-        return jsonify({"mensaje": "Error interno"}), 500
+        return jsonify({"mensaje": "Error interno del servidor"}), 500
 
 @app.route('/productos', methods=['GET'])
 def obtener_productos():
@@ -128,7 +131,6 @@ def obtener_productos():
     except Exception as e:
         return jsonify({"mensaje": str(e)}), 500
 
-# --- NUEVA RUTA: FINALIZAR PEDIDO (RECIBE COMPRA DE EXPRESS) ---
 @app.route('/finalizar_pedido', methods=['POST'])
 def finalizar_pedido():
     try:
@@ -137,31 +139,46 @@ def finalizar_pedido():
             id_usuario=datos['usuario_id'],
             direccion_entrega=datos['direccion_entrega'],
             total=datos['total'],
-            estado='pendiente' # Empieza pendiente para que el admin lo revise
+            estado='pendiente'
         )
         db.session.add(nuevo_pedido)
         db.session.commit()
-        return jsonify({"mensaje": "Pedido guardado en Neon", "pedido_id": nuevo_pedido.id}), 201
+        return jsonify({"mensaje": "Pedido guardado con éxito", "pedido_id": nuevo_pedido.id}), 201
     except Exception as e:
         db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
 
-# --- NUEVA RUTA: PARA QUE DELIVERY VEA BOLSAS DISPONIBLES ---
 @app.route('/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
     try:
-        # Solo mostramos los que el admin marcó como listos
-        pedidos = Pedido.query.filter_by(estado='listo_para_entrega').all()
+        pedidos = Pedido.query.filter_by(estado='pendiente').all()
         resultado = []
         for ped in pedidos:
             resultado.append({
                 "id": ped.id,
                 "direccion": ped.direccion_entrega,
                 "total": ped.total,
-                "estado": ped.estado
+                "estado": ped.estado,
+                "fecha": ped.fecha_creacion.strftime("%Y-%m-%d %H:%M:%S")
             })
         return jsonify(resultado), 200
     except Exception as e:
+        return jsonify({"mensaje": str(e)}), 500
+
+# --- RUTA PARA ACEPTAR PEDIDO (DELIVERY) ---
+@app.route('/aceptar_pedido', methods=['POST'])
+def aceptar_pedido():
+    try:
+        datos = request.json
+        p = Pedido.query.get(datos['pedido_id'])
+        if p:
+            p.estado = 'aceptado'
+            p.repartidor_id = datos['repartidor_id']
+            db.session.commit()
+            return jsonify({"mensaje": "Pedido aceptado"}), 200
+        return jsonify({"mensaje": "Pedido no encontrado"}), 404
+    except Exception as e:
+        db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/seed', methods=['GET'])
@@ -185,5 +202,5 @@ def seed_data():
         return jsonify({"mensaje": str(e)}), 500
 
 if __name__ == '__main__':
-    port = int(os.environ.get("PORT", 5000))
+    port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)

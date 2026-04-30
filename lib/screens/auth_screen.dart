@@ -15,18 +15,15 @@ class AuthScreen extends StatefulWidget {
 
 class _AuthScreenState extends State<AuthScreen> {
   bool isRegister = false;
+  bool _isLoading = false; 
   
   final _userController = TextEditingController();
   final _emailController = TextEditingController();
   final _passController = TextEditingController();
   final _formKey = GlobalKey<FormState>();
 
-  // Colores Oficiales Jaydi basados en el logo
   final Color azulJaydi = const Color(0xFF0A4297);
   final Color naranjaJaydi = const Color(0xFFE67E22);
-
-
-
 
   @override
   void dispose() {
@@ -38,60 +35,64 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Future<void> _procesarAcceso() async {
     if (_formKey.currentState!.validate()) {
+      setState(() => _isLoading = true); 
+      
       final prefs = await SharedPreferences.getInstance();
       final String usuarioInput = _userController.text.trim();
       final String claveInput = _passController.text.trim();
       final String correoInput = _emailController.text.trim();
       final String lang = idiomaGlobal.value;
 
-      if (isRegister) {
-        try {
-          // 1. INTENTAR SUBIR A LA NUBE (NEON/PYTHON)
+      try {
+        if (isRegister) {
           debugPrint("🚀 Subiendo a la nube de Jaydi...");
           bool exitoNube = await ApiService.registrarUsuario(usuarioInput, correoInput, claveInput);
 
           if (exitoNube) {
-            // 2. SI SUBE A LA NUBE, TAMBIÉN GUARDAMOS LOCAL (SQLITE)
             await DBHelper.insertarUsuario(usuarioInput, claveInput, correoInput);
-            await prefs.setString('ultimo_usuario_activo', usuarioInput);
-
             if (!mounted) return;
             ScaffoldMessenger.of(context).showSnackBar(
-              SnackBar(
-                content: Text(Traductor.obtener('registro_exito', lang)), 
-                backgroundColor: Colors.green
-              )
+              SnackBar(content: Text(Traductor.obtener('registro_exito', lang)), backgroundColor: Colors.green)
             );
-
             setState(() {
               isRegister = false;
               _passController.clear();
+              _userController.clear();
             });
           } else {
-            _mostrarError("El correo ya existe en la nube o el servidor está caído");
+            _mostrarError("El correo ya existe o hay un problema con el servidor");
           }
-        } catch (e) {
-          _mostrarError("Error de conexión con el servidor");
-        }
-      } else {
-        // --- LÓGICA DE LOGIN ---
-        debugPrint("🔐 Verificando credenciales...");
-        
-        // Aquí usamos usuarioInput que es donde escriben el correo para entrar
-        var resultadoNube = await ApiService.login(usuarioInput, claveInput);
-
-        if (resultadoNube != null) {
-          debugPrint("✅ Login exitoso. Entrando...");
-          
-          // Extraemos el nombre real
-          String nombreReal = resultadoNube['usuario']['nombre'];
-
-          // Guardamos y mandamos el nombre, no el correo
-          await prefs.setString('ultimo_usuario_activo', nombreReal);
-          _irAlHome(nombreReal); 
         } else {
-          _mostrarError(Traductor.obtener('no_registrado', lang));
+          debugPrint("🔐 Verificando credenciales en la nube...");
+          var resultadoNube = await ApiService.login(usuarioInput, claveInput);
+
+          if (resultadoNube != null) {
+            debugPrint("✅ Login exitoso. Sincronizando datos...");
+            
+            // Verificamos que los datos vengan correctamente de Neon
+            if (resultadoNube['usuario'] != null) {
+              final datosUsuario = resultadoNube['usuario'];
+              
+              // PARSEO BLINDADO: Evita el error "null is not a subtype of int"
+              int idUsuario = int.tryParse(datosUsuario['id']?.toString() ?? '0') ?? 0;
+              String nombreReal = datosUsuario['nombre']?.toString() ?? "Usuario";
+
+              await prefs.setInt('id_usuario_activo', idUsuario);
+              await prefs.setString('ultimo_usuario_activo', nombreReal);
+              
+              _irAlHome(nombreReal); 
+            } else {
+              _mostrarError("Error: Datos de usuario incompletos");
+            }
+          } else {
+            _mostrarError("Correo o contraseña incorrectos");
+          }
         }
+      } catch (e) {
+        debugPrint("❌ ERROR CRÍTICO: $e");
+        _mostrarError("Error de conexión o datos: $e");
+      } finally {
+        if (mounted) setState(() => _isLoading = false); 
       }
     }
   }
@@ -123,7 +124,7 @@ class _AuthScreenState extends State<AuthScreen> {
                   key: _formKey,
                   child: Column(
                     children: [
-                      Image.asset('assets/images/jaydi_logo.jpg', height: 100), // Aumenté un poco el tamaño
+                      Image.asset('assets/images/jaydi_logo.jpg', height: 100),
                       const SizedBox(height: 15),
                       Text(
                         Traductor.obtener('eslogan', lang), 
@@ -137,59 +138,67 @@ class _AuthScreenState extends State<AuthScreen> {
                         ],
                       ),
                       const SizedBox(height: 30),
-                      _input(Traductor.obtener('usuario', lang), _userController, Icons.person_rounded),
+                      
+                      _input(
+                        isRegister ? Traductor.obtener('usuario', lang) : "Correo Electrónico", 
+                        _userController, 
+                        Icons.person_rounded,
+                        enabled: !_isLoading,
+                      ),
+                      
                       if (isRegister) ...[
                         const SizedBox(height: 15),
-                        _input(Traductor.obtener('correo', lang), _emailController, Icons.email_rounded),
+                        _input(Traductor.obtener('correo', lang), _emailController, Icons.email_rounded, enabled: !_isLoading),
                       ],
                       const SizedBox(height: 15),
-                      _input(Traductor.obtener('clave', lang), _passController, Icons.lock_rounded, isPass: true, len: 6),
+                      _input(Traductor.obtener('clave', lang), _passController, Icons.lock_rounded, isPass: true, len: 12, enabled: !_isLoading),
                       const SizedBox(height: 35),
                       
-                      // --- BOTÓN PRINCIPAL CON DEGRADADO BELLO ---
                       GestureDetector(
-                        onTap: _procesarAcceso,
+                        onTap: _isLoading ? null : _procesarAcceso,
                         child: Container(
                           width: double.infinity,
                           height: 55,
                           decoration: BoxDecoration(
                             gradient: LinearGradient(
-                              colors: [azulJaydi, naranjaJaydi],
+                              colors: _isLoading ? [Colors.grey, Colors.grey] : [azulJaydi, naranjaJaydi],
                               begin: Alignment.centerLeft,
                               end: Alignment.centerRight,
                             ),
                             borderRadius: BorderRadius.circular(15),
                             boxShadow: [
                               BoxShadow(
-                                color: azulJaydi.withValues(alpha: 0.3),
+                                color: azulJaydi.withValues(alpha: 0.3), 
                                 blurRadius: 10,
                                 offset: const Offset(0, 5),
                               ),
                             ],
                           ),
                           child: Center(
-                            child: Text(
-                              isRegister ? Traductor.obtener('crear', lang) : Traductor.obtener('entrar', lang), 
-                              style: const TextStyle(
-                                color: Colors.white, 
-                                fontSize: 16, 
-                                fontWeight: FontWeight.bold, 
-                                fontFamily: 'Montserrat'
-                              ),
-                            ),
+                            child: _isLoading 
+                              ? const CircularProgressIndicator(color: Colors.white)
+                              : Text(
+                                  isRegister ? Traductor.obtener('crear', lang) : Traductor.obtener('entrar', lang), 
+                                  style: const TextStyle(
+                                    color: Colors.white, 
+                                    fontSize: 16, 
+                                    fontWeight: FontWeight.bold, 
+                                    fontFamily: 'Montserrat'
+                                  ),
+                                ),
                           ),
                         ),
                       ),
                       
                       const SizedBox(height: 25),
                       TextButton(
-                        onPressed: () => _irAlHome("Invitado"), 
+                        onPressed: _isLoading ? null : () => _irAlHome("Invitado"), 
                         child: Text(
                           Traductor.obtener('invitado_btn', lang), 
                           style: TextStyle(
                             color: azulJaydi.withValues(alpha: 0.7), 
                             fontWeight: FontWeight.w600, 
-                            fontFamily: 'Montserrat'
+                            fontFamily: 'Montserrat',
                           ),
                         ),
                       )
@@ -206,7 +215,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
   Widget _tab(String t, bool s, VoidCallback o, bool l) => Expanded(
     child: GestureDetector(
-      onTap: o,
+      onTap: _isLoading ? null : o,
       child: Container(
         height: 50, alignment: Alignment.center,
         decoration: BoxDecoration(
@@ -226,20 +235,22 @@ class _AuthScreenState extends State<AuthScreen> {
     ),
   );
 
-  Widget _input(String l, TextEditingController c, IconData i, {bool isPass = false, int? len}) => TextFormField(
-    controller: c, obscureText: isPass, maxLength: len,
-    keyboardType: len != null ? TextInputType.number : TextInputType.text,
+  Widget _input(String l, TextEditingController c, IconData i, {bool isPass = false, int? len, bool enabled = true}) => TextFormField(
+    controller: c, 
+    obscureText: isPass, 
+    maxLength: len,
+    enabled: enabled,
     style: const TextStyle(fontFamily: 'Montserrat'),
     decoration: InputDecoration(
       labelText: l, 
       labelStyle: const TextStyle(fontFamily: 'Montserrat', fontSize: 14),
       prefixIcon: Icon(i, color: azulJaydi), 
       filled: true, 
-      fillColor: Colors.white, 
+      fillColor: enabled ? Colors.white : Colors.grey[200], 
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: BorderSide.none),
       counterText: "", 
       contentPadding: const EdgeInsets.symmetric(vertical: 18, horizontal: 15),
     ),
-    validator: (v) => v!.isEmpty ? "..." : null,
+    validator: (v) => v!.isEmpty ? "Campo obligatorio" : null,
   );
 }
