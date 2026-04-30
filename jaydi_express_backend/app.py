@@ -122,23 +122,25 @@ def aprobar_repartidor(user_id):
 def registrar():
     try:
         datos = request.json
-        usuario_existe = Usuario.query.filter_by(email=datos.get('email')).first()
-        if usuario_existe:
+        # Verificamos si ya existe por email
+        if Usuario.query.filter_by(email=datos.get('email')).first():
             return jsonify({"mensaje": "Ese correo ya está registrado"}), 400
 
-        password_encriptada = generate_password_hash(datos.get('password'))
         nuevo_usuario = Usuario(
             nombre=datos.get('nombre'),
+            apellido=datos.get('apellido'), # Captura "Hernandez"
+            telefono=datos.get('telefono'), # Captura el número
             email=datos.get('email'),
-            password=password_encriptada,
-            rol=datos.get('rol', 'cliente')
+            password=generate_password_hash(datos.get('password')),
+            rol='repartidor' # Lo marca como repartidor para que salga en tu panel
         )
         db.session.add(nuevo_usuario)
         db.session.commit()
         return jsonify({"mensaje": "Usuario creado con éxito"}), 201
     except Exception as e:
         db.session.rollback()
-        return jsonify({"mensaje": str(e)}), 400
+        print(f"Error en registro: {str(e)}")
+        return jsonify({"mensaje": f"Error: {str(e)}"}), 400
 
 @app.route('/login', methods=['POST'])
 def login():
