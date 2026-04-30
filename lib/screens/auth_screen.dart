@@ -45,7 +45,7 @@ class _AuthScreenState extends State<AuthScreen> {
 
       try {
         if (isRegister) {
-          debugPrint("🚀 Subiendo a la nube de Jaydi...");
+          debugPrint("🚀 Registrando nuevo usuario en la nube...");
           bool exitoNube = await ApiService.registrarUsuario(usuarioInput, correoInput, claveInput);
 
           if (exitoNube) {
@@ -66,31 +66,31 @@ class _AuthScreenState extends State<AuthScreen> {
           debugPrint("🔐 Verificando credenciales en la nube...");
           var resultadoNube = await ApiService.login(usuarioInput, claveInput);
 
-          if (resultadoNube != null) {
-            debugPrint("✅ Login exitoso. Sincronizando datos...");
+          if (resultadoNube != null && resultadoNube['usuario'] != null) {
+            debugPrint("✅ Login exitoso. Sincronizando ID con Neon...");
             
-            // Verificamos que los datos vengan correctamente de Neon
-            if (resultadoNube['usuario'] != null) {
-              final datosUsuario = resultadoNube['usuario'];
-              
-              // PARSEO BLINDADO: Evita el error "null is not a subtype of int"
-              int idUsuario = int.tryParse(datosUsuario['id']?.toString() ?? '0') ?? 0;
-              String nombreReal = datosUsuario['nombre']?.toString() ?? "Usuario";
+            final datosUsuario = resultadoNube['usuario'];
+            
+            // PARSEO SEGURO DEL ID
+            int idUsuario = int.tryParse(datosUsuario['id']?.toString() ?? '0') ?? 0;
+            String nombreReal = datosUsuario['nombre']?.toString() ?? "Usuario";
+            String emailReal = datosUsuario['email']?.toString() ?? "";
 
-              await prefs.setInt('id_usuario_activo', idUsuario);
-              await prefs.setString('ultimo_usuario_activo', nombreReal);
-              
-              _irAlHome(nombreReal); 
-            } else {
-              _mostrarError("Error: Datos de usuario incompletos");
-            }
+            // --- SINCRONIZACIÓN CRÍTICA DE LLAVES ---
+            // Guardamos con ambos nombres para que no falle NINGUNA pantalla
+            await prefs.setInt('user_id_neon', idUsuario); // Nombre que usa el carrito
+            await prefs.setInt('id_usuario_activo', idUsuario); // Nombre que usas en el Home
+            await prefs.setString('ultimo_usuario_activo', emailReal);
+            await prefs.setString('nombre_usuario', nombreReal);
+            
+            _irAlHome(nombreReal); 
           } else {
             _mostrarError("Correo o contraseña incorrectos");
           }
         }
       } catch (e) {
         debugPrint("❌ ERROR CRÍTICO: $e");
-        _mostrarError("Error de conexión o datos: $e");
+        _mostrarError("Error de conexión: Verifica tu internet o el servidor");
       } finally {
         if (mounted) setState(() => _isLoading = false); 
       }
@@ -98,6 +98,7 @@ class _AuthScreenState extends State<AuthScreen> {
   }
 
   void _mostrarError(String msg) {
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(msg), backgroundColor: Colors.red));
   }
 
