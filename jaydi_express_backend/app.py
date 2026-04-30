@@ -80,22 +80,27 @@ def admin_page():
 
 @app.route('/admin/api/repartidores', methods=['GET'])
 def api_repartidores():
-    """Devuelve la lista de usuarios para el Panel Admin"""
+    """Devuelve la lista SOLO de repartidores para el Panel Admin"""
     try:
-        usuarios = Usuario.query.all()
+        # Filtramos en la base de datos por el rol exacto
+        repartidores = Usuario.query.filter_by(rol='repartidor').all()
+        
         resultado = []
-        for u in usuarios:
+        for r in repartidores:
             resultado.append({
-                "id": u.id,
-                "nombre": u.nombre,
-                "correo": u.email,
-                "saldo": u.saldo or 0.0,
-                "es_verificado": u.verificado,
-                "ultima_conexion": None # Opcional: datetime.utcnow().isoformat()
+                "id": r.id,
+                "nombre": r.nombre,
+                "correo": r.email,
+                "saldo": getattr(r, 'saldo', 0.0) or 0.0,
+                "es_verificado": getattr(r, 'verificado', False),
+                "ultima_conexion": None 
             })
+        
+        # Si no hay repartidores, devolvemos lista vacía pero con éxito (200)
         return jsonify(resultado), 200
     except Exception as e:
-        return jsonify({"mensaje": str(e)}), 500
+        print(f"Error en API Admin: {str(e)}")
+        return jsonify({"mensaje": f"Error filtrando repartidores: {str(e)}"}), 500
 
 @app.route('/admin/aprobar/<int:user_id>', methods=['POST'])
 def aprobar_repartidor(user_id):
