@@ -6,7 +6,7 @@ class ApiService {
   // URL ÚNICA DE PRODUCCIÓN (Basada en tus capturas de Render)
   // IMPORTANTE: Asegúrate de que no tenga espacios ni barras al final
   // URL ÚNICA DE PRODUCCIÓN 
-static const String baseUrl = 'https://jaydi-server.onrender.com';
+static const String baseUrl = 'https://jaydi-delivery-serverv.onrender.com';
   // --- 1. FUNCIÓN PARA REGISTRAR ---
   static Future<bool> registrarUsuario(String nombre, String email, String password) async {
     final url = Uri.parse('$baseUrl/registrar');

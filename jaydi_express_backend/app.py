@@ -6,7 +6,6 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 
 app = Flask(__name__)
-# Habilitamos CORS para que las apps de Flutter puedan conectarse sin bloqueos
 CORS(app)
 
 # --- CONFIGURACIÓN DE LA BASE DE DATOS (NEON) ---
@@ -74,14 +73,14 @@ def index():
 def registrar():
     try:
         datos = request.json
-        usuario_existe = Usuario.query.filter_by(email=datos['email']).first()
+        usuario_existe = Usuario.query.filter_by(email=datos.get('email')).first()
         if usuario_existe:
             return jsonify({"mensaje": "Ese correo ya está registrado"}), 400
 
-        password_encriptada = generate_password_hash(datos['password'])
+        password_encriptada = generate_password_hash(datos.get('password'))
         nuevo_usuario = Usuario(
-            nombre=datos['nombre'],
-            email=datos['email'],
+            nombre=datos.get('nombre'),
+            email=datos.get('email'),
             password=password_encriptada,
             rol=datos.get('rol', 'cliente')
         )
@@ -135,10 +134,16 @@ def obtener_productos():
 def finalizar_pedido():
     try:
         datos = request.json
+        # CORRECCIÓN AQUÍ: Buscamos el ID del usuario de varias formas por si Flutter lo manda distinto
+        u_id = datos.get('usuario_id') or datos.get('id_usuario') or datos.get('id')
+        
+        if not u_id:
+            return jsonify({"mensaje": "Falta el ID del usuario"}), 400
+
         nuevo_pedido = Pedido(
-            id_usuario=datos['usuario_id'],
-            direccion_entrega=datos['direccion_entrega'],
-            total=datos['total'],
+            id_usuario=u_id,
+            direccion_entrega=datos.get('direccion_entrega', 'Sin dirección'),
+            total=datos.get('total', 0.0),
             estado='pendiente'
         )
         db.session.add(nuevo_pedido)
@@ -146,6 +151,8 @@ def finalizar_pedido():
         return jsonify({"mensaje": "Pedido guardado con éxito", "pedido_id": nuevo_pedido.id}), 201
     except Exception as e:
         db.session.rollback()
+        # Esto imprimirá el error real en los logs de Render
+        print(f"Error en finalizar_pedido: {str(e)}") 
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/pedidos_disponibles', methods=['GET'])
@@ -165,15 +172,15 @@ def pedidos_disponibles():
     except Exception as e:
         return jsonify({"mensaje": str(e)}), 500
 
-# --- RUTA PARA ACEPTAR PEDIDO (DELIVERY) ---
 @app.route('/aceptar_pedido', methods=['POST'])
 def aceptar_pedido():
     try:
         datos = request.json
-        p = Pedido.query.get(datos['pedido_id'])
+        p_id = datos.get('pedido_id') or datos.get('id')
+        p = Pedido.query.get(p_id)
         if p:
             p.estado = 'aceptado'
-            p.repartidor_id = datos['repartidor_id']
+            p.repartidor_id = datos.get('repartidor_id')
             db.session.commit()
             return jsonify({"mensaje": "Pedido aceptado"}), 200
         return jsonify({"mensaje": "Pedido no encontrado"}), 404
