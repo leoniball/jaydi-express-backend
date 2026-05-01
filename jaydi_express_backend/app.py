@@ -22,14 +22,15 @@ db = SQLAlchemy(app)
 # --- MODELOS DE DATOS ---
 
 class Usuario(db.Model):
-    __tablename__ = 'usuario'
+    __tablename__ = 'usuario' # Tabla en singular
     id = db.Column(db.Integer, primary_key=True)
     nombre = db.Column(db.String(100), nullable=False)
-    email = db.Column(db.String(120), unique=True, nullable=False)
-    password = db.Column(db.String(255), nullable=False) 
-    rol = db.Column(db.String(20), default='cliente')
-    verificado = db.Column(db.Boolean, default=False) # Para el Panel Admin
-    saldo = db.Column(db.Float, default=0.0)         # Para el Panel Admin
+    apellido = db.Column(db.String(100)) # Coincide con tu formulario
+    telefono = db.Column(db.String(20))   # Coincide con tu formulario
+    email = db.Column(db.String(120), unique=True, nullable=False) # Se llama 'email', no 'correo'
+    password = db.Column(db.String(255), nullable=False)           # Se llama 'password', no 'clave'
+    rol = db.Column(db.String(20), default='cliente')              # Se llama 'rol', no 'tipo_usuario'
+    verificado = db.Column(db.Boolean, default=False)              # Se llama 'verificado', no 'es_verificado'
 
 class Comercio(db.Model):
     __tablename__ = 'comercio'
