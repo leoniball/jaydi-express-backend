@@ -148,6 +148,23 @@ def gestionar_perfil(user_id):
         db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
 
+# --- NUEVA RUTA: HISTORIAL DE VIAJES PARA REPARTIDOR ---
+@app.route('/historial_viajes/<int:repartidor_id>', methods=['GET'])
+def historial_viajes(repartidor_id):
+    try:
+        # Buscamos solo pedidos con estado 'entregado' o 'completado' para este repartidor
+        # Filtramos por repartidor_id y ordenamos por los más recientes
+        pedidos = Pedido.query.filter_by(repartidor_id=repartidor_id, estado='entregado').order_by(Pedido.fecha_creacion.desc()).all()
+        
+        return jsonify([{
+            "id": p.id,
+            "direccion": p.direccion_entrega,
+            "total": p.total,
+            "fecha": p.fecha_creacion.strftime("%d/%m/%Y %H:%M")
+        } for p in pedidos]), 200
+    except Exception as e:
+        return jsonify({"mensaje": str(e)}), 500
+
 # --- API DE ADMINISTRACIÓN ---
 
 @app.route('/admin/api/repartidores', methods=['GET'])
@@ -193,7 +210,6 @@ def verificar_estatus(user_id):
         return jsonify({"mensaje": "Usuario no encontrado"}), 404
     except Exception as e:
         return jsonify({"mensaje": str(e)}), 500
-# ----------------------------------------------------
 
 # --- LÓGICA DE REGISTRO Y LOGIN (REFORZADA) ---
 
@@ -206,8 +222,6 @@ def registrar():
         if Usuario.query.filter_by(email=email).first():
             return jsonify({"mensaje": "Este correo ya está registrado"}), 400
 
-        # Determinamos el rol: si la petición viene con rol 'repartidor', se lo asignamos
-        # Esto permite que la app de Delivery mande su rol y la de Express sea cliente por defecto
         nuevo_rol = datos.get('rol', 'cliente')
 
         nuevo_usuario = Usuario(
@@ -233,13 +247,6 @@ def login():
         usuario = Usuario.query.filter_by(email=datos.get('email')).first()
         
         if usuario and check_password_hash(usuario.password, datos.get('password')):
-            
-            # BLOQUEO ELIMINADO: 
-            # Ahora dejamos que el servidor responda con los datos y el status 200.
-            # Flutter leerá el "verificado": False y lo mandará a la pantalla de subir documentos.
-            # if usuario.rol == 'repartidor' and not usuario.verificado:
-            #     return jsonify({"mensaje": "Tu cuenta de repartidor está pendiente de aprobación"}), 403
-            
             return jsonify({
                 "mensaje": "Bienvenido",
                 "usuario": {
