@@ -4,6 +4,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
+from sqlalchemy import text # Importante para meter comandos SQL crudos a Neon
 
 app = Flask(__name__)
 CORS(app)
@@ -32,6 +33,12 @@ class Usuario(db.Model):
     rol = db.Column(db.String(20), default='cliente') # 'cliente' o 'repartidor'
     verificado = db.Column(db.Boolean, default=False)
     saldo = db.Column(db.Float, default=0.0)
+    
+    # --- NUEVOS CAMPOS DE PERFIL (Protegidos) ---
+    foto_perfil = db.Column(db.Text, nullable=True) 
+    vehiculo = db.Column(db.String(50), nullable=True) 
+    placa = db.Column(db.String(20), nullable=True)
+    viajes_completados = db.Column(db.Integer, default=0)
 
 class Comercio(db.Model):
     __tablename__ = 'comercio'
@@ -76,6 +83,70 @@ def index():
 @app.route('/admin')
 def admin_page():
     return render_template('admin_panel.html')
+
+# --- PARCHE MÁGICO PARA ACTUALIZAR LA BASE DE DATOS SIN BORRAR NADA ---
+@app.route('/actualizar_bd_perfil')
+def actualizar_bd_perfil():
+    try:
+        # Inyectamos las columnas directo a Neon
+        db.session.execute(text('ALTER TABLE usuario ADD COLUMN foto_perfil TEXT;'))
+        db.session.execute(text('ALTER TABLE usuario ADD COLUMN vehiculo VARCHAR(50);'))
+        db.session.execute(text('ALTER TABLE usuario ADD COLUMN placa VARCHAR(20);'))
+        db.session.execute(text('ALTER TABLE usuario ADD COLUMN viajes_completados INTEGER DEFAULT 0;'))
+        db.session.commit()
+        return jsonify({"mensaje": "¡Éxito! Columnas de perfil añadidas a la Base de Datos Neon."}), 200
+    except Exception as e:
+        db.session.rollback()
+        # Si da error, probablemente es porque ya existen, así que no hay problema
+        return jsonify({"mensaje": "Aviso: " + str(e)}), 200
+
+# --- GESTIÓN DE PERFIL CON CAMBIO DE CLAVE ---
+@app.route('/perfil/<int:user_id>', methods=['GET', 'PUT'])
+def gestionar_perfil(user_id):
+    try:
+        usuario = Usuario.query.get(user_id)
+        if not usuario:
+            return jsonify({"mensaje": "Usuario no encontrado"}), 404
+
+        if request.method == 'GET':
+            return jsonify({
+                "nombre": usuario.nombre,
+                "apellido": usuario.apellido or "",
+                "email": usuario.email,
+                "telefono": usuario.telefono or "",
+                "foto_perfil": usuario.foto_perfil or "",
+                "vehiculo": usuario.vehiculo or "",
+                "placa": usuario.placa or "",
+                "viajes_completados": usuario.viajes_completados or 0,
+                "saldo": usuario.saldo or 0.0
+            }), 200
+
+        if request.method == 'PUT':
+            datos = request.json
+            
+            # Actualizamos datos normales
+            if 'foto_perfil' in datos: usuario.foto_perfil = datos['foto_perfil']
+            if 'vehiculo' in datos: usuario.vehiculo = datos['vehiculo']
+            if 'placa' in datos: usuario.placa = datos['placa']
+            if 'telefono' in datos: usuario.telefono = datos['telefono']
+            if 'nombre' in datos: usuario.nombre = datos['nombre']
+            if 'apellido' in datos: usuario.apellido = datos['apellido']
+
+            # Seguridad: Cambio de contraseña
+            if 'password_actual' in datos and 'password_nuevo' in datos:
+                # Comparamos la clave vieja con la de la base de datos
+                if check_password_hash(usuario.password, datos['password_actual']):
+                    # Si es correcta, le metemos el hash a la nueva
+                    usuario.password = generate_password_hash(datos['password_nuevo'])
+                else:
+                    return jsonify({"mensaje": "La contraseña actual es incorrecta"}), 400
+
+            db.session.commit()
+            return jsonify({"mensaje": "Perfil actualizado con éxito"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"mensaje": str(e)}), 500
 
 # --- API DE ADMINISTRACIÓN ---
 
