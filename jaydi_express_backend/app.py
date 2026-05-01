@@ -149,9 +149,12 @@ def login():
         usuario = Usuario.query.filter_by(email=datos.get('email')).first()
         
         if usuario and check_password_hash(usuario.password, datos.get('password')):
-            # Si el usuario es repartidor, verificamos que esté aprobado
-            if usuario.rol == 'repartidor' and not usuario.verificado:
-                return jsonify({"mensaje": "Tu cuenta de repartidor está pendiente de aprobación"}), 403
+            
+            # BLOQUEO ELIMINADO: 
+            # Ahora dejamos que el servidor responda con los datos y el status 200.
+            # Flutter leerá el "verificado": False y lo mandará a la pantalla de subir documentos.
+            # if usuario.rol == 'repartidor' and not usuario.verificado:
+            #     return jsonify({"mensaje": "Tu cuenta de repartidor está pendiente de aprobación"}), 403
             
             return jsonify({
                 "mensaje": "Bienvenido",
