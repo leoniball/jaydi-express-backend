@@ -34,11 +34,15 @@ class Usuario(db.Model):
     verificado = db.Column(db.Boolean, default=False)
     saldo = db.Column(db.Float, default=0.0)
     
-    # --- NUEVOS CAMPOS DE PERFIL (Protegidos) ---
+    # --- CAMPOS DE PERFIL Y RASTREO ---
     foto_perfil = db.Column(db.Text, nullable=True) 
     vehiculo = db.Column(db.String(50), nullable=True) 
     placa = db.Column(db.String(20), nullable=True)
     viajes_completados = db.Column(db.Integer, default=0)
+    
+    # NUEVOS: Para el tiempo real en Los Teques
+    latitud = db.Column(db.Float, nullable=True)
+    longitud = db.Column(db.Float, nullable=True)
 
 class Comercio(db.Model):
     __tablename__ = 'comercio'
@@ -68,6 +72,10 @@ class Pedido(db.Model):
     estado = db.Column(db.String(50), default='pendiente')
     repartidor_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), nullable=True)
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
+    
+    # NUEVOS: Para rastrear el pedido específico en el mapa
+    latitud_actual = db.Column(db.Float, nullable=True)
+    longitud_actual = db.Column(db.Float, nullable=True)
 
 # Sincronización automática de tablas al iniciar
 with app.app_context():
@@ -84,21 +92,78 @@ def index():
 def admin_page():
     return render_template('admin_panel.html')
 
-# --- PARCHE MÁGICO PARA ACTUALIZAR LA BASE DE DATOS SIN BORRAR NADA ---
+# --- PARCHE MÁGICO 2.0: AHORA TAMBIÉN PARA GPS ---
 @app.route('/actualizar_bd_perfil')
 def actualizar_bd_perfil():
     try:
         # Inyectamos las columnas directo a Neon
-        db.session.execute(text('ALTER TABLE usuario ADD COLUMN foto_perfil TEXT;'))
-        db.session.execute(text('ALTER TABLE usuario ADD COLUMN vehiculo VARCHAR(50);'))
-        db.session.execute(text('ALTER TABLE usuario ADD COLUMN placa VARCHAR(20);'))
-        db.session.execute(text('ALTER TABLE usuario ADD COLUMN viajes_completados INTEGER DEFAULT 0;'))
+        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN foto_perfil TEXT;'))
+        except: pass
+        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN vehiculo VARCHAR(50);'))
+        except: pass
+        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN placa VARCHAR(20);'))
+        except: pass
+        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN viajes_completados INTEGER DEFAULT 0;'))
+        except: pass
+        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN latitud FLOAT;'))
+        except: pass
+        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN longitud FLOAT;'))
+        except: pass
+        
+        # Nuevos campos para la tabla de pedidos
+        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN latitud_actual FLOAT;'))
+        except: pass
+        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_actual FLOAT;'))
+        except: pass
+        
         db.session.commit()
-        return jsonify({"mensaje": "¡Éxito! Columnas de perfil añadidas a la Base de Datos Neon."}), 200
+        return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada con campos de Perfil y GPS."}), 200
     except Exception as e:
         db.session.rollback()
-        # Si da error, probablemente es porque ya existen, así que no hay problema
         return jsonify({"mensaje": "Aviso: " + str(e)}), 200
+
+# --- NUEVA RUTA: ACTUALIZAR UBICACIÓN GPS (REPARTIDOR) ---
+@app.route('/actualizar_ubicacion', methods=['POST'])
+def actualizar_ubicacion_post():
+    try:
+        datos = request.json
+        id_pedido = datos.get('id_pedido')
+        lat = datos.get('latitud')
+        lng = datos.get('longitud')
+
+        pedido = Pedido.query.get(id_pedido)
+        if pedido:
+            pedido.latitud_actual = lat
+            pedido.longitud_actual = lng
+            
+            # También actualizamos la posición global del usuario repartidor
+            usuario = Usuario.query.get(pedido.repartidor_id)
+            if usuario:
+                usuario.latitud = lat
+                usuario.longitud = lng
+                
+            db.session.commit()
+            return jsonify({"status": "ok", "mensaje": "Ubicación actualizada"}), 200
+        return jsonify({"mensaje": "Pedido no encontrado"}), 404
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"mensaje": str(e)}), 500
+
+# --- NUEVA RUTA: ESTADO DEL PEDIDO (Para el Mapbox del Cliente) ---
+@app.route('/estado_pedido/<int:id_pedido>', methods=['GET'])
+def estado_pedido(id_pedido):
+    try:
+        pedido = Pedido.query.get(id_pedido)
+        if pedido:
+            return jsonify({
+                "id": pedido.id,
+                "estado": pedido.estado,
+                "latitud_actual": pedido.latitud_actual or 10.3444,
+                "longitud_actual": pedido.longitud_actual or -67.0433
+            }), 200
+        return jsonify({"mensaje": "Pedido no encontrado"}), 404
+    except Exception as e:
+        return jsonify({"mensaje": str(e)}), 500
 
 # --- GESTIÓN DE PERFIL CON CAMBIO DE CLAVE ---
 @app.route('/perfil/<int:user_id>', methods=['GET', 'PUT'])
@@ -118,13 +183,13 @@ def gestionar_perfil(user_id):
                 "vehiculo": usuario.vehiculo or "",
                 "placa": usuario.placa or "",
                 "viajes_completados": usuario.viajes_completados or 0,
-                "saldo": usuario.saldo or 0.0
+                "saldo": usuario.saldo or 0.0,
+                "latitud": usuario.latitud or 10.3445, # Por defecto Los Teques
+                "longitud": usuario.longitud or -67.0432
             }), 200
 
         if request.method == 'PUT':
             datos = request.json
-            
-            # Actualizamos datos normales
             if 'foto_perfil' in datos: usuario.foto_perfil = datos['foto_perfil']
             if 'vehiculo' in datos: usuario.vehiculo = datos['vehiculo']
             if 'placa' in datos: usuario.placa = datos['placa']
@@ -132,11 +197,8 @@ def gestionar_perfil(user_id):
             if 'nombre' in datos: usuario.nombre = datos['nombre']
             if 'apellido' in datos: usuario.apellido = datos['apellido']
 
-            # Seguridad: Cambio de contraseña
             if 'password_actual' in datos and 'password_nuevo' in datos:
-                # Comparamos la clave vieja con la de la base de datos
                 if check_password_hash(usuario.password, datos['password_actual']):
-                    # Si es correcta, le metemos el hash a la nueva
                     usuario.password = generate_password_hash(datos['password_nuevo'])
                 else:
                     return jsonify({"mensaje": "La contraseña actual es incorrecta"}), 400
@@ -148,14 +210,11 @@ def gestionar_perfil(user_id):
         db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
 
-# --- NUEVA RUTA: HISTORIAL DE VIAJES PARA REPARTIDOR ---
+# --- HISTORIAL DE VIAJES ---
 @app.route('/historial_viajes/<int:repartidor_id>', methods=['GET'])
 def historial_viajes(repartidor_id):
     try:
-        # Buscamos solo pedidos con estado 'entregado' o 'completado' para este repartidor
-        # Filtramos por repartidor_id y ordenamos por los más recientes
         pedidos = Pedido.query.filter_by(repartidor_id=repartidor_id, estado='entregado').order_by(Pedido.fecha_creacion.desc()).all()
-        
         return jsonify([{
             "id": p.id,
             "direccion": p.direccion_entrega,
@@ -170,7 +229,6 @@ def historial_viajes(repartidor_id):
 @app.route('/admin/api/repartidores', methods=['GET'])
 def api_repartidores():
     try:
-        # Filtramos estrictamente por repartidores para el Panel
         repartidores = Usuario.query.filter_by(rol='repartidor').all()
         resultado = []
         for r in repartidores:
@@ -199,31 +257,26 @@ def aprobar_repartidor(user_id):
         db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
 
-# --- EL ENGRANAJE NUEVO QUE FALTABA PARA FLUTTER ---
 @app.route('/verificar_estatus/<int:user_id>', methods=['GET'])
 def verificar_estatus(user_id):
     try:
         usuario = Usuario.query.get(user_id)
         if usuario:
-            # Le responde a la app de Flutter si ya lo aprobaste (True) o no (False)
             return jsonify({"verificado": usuario.verificado}), 200
         return jsonify({"mensaje": "Usuario no encontrado"}), 404
     except Exception as e:
         return jsonify({"mensaje": str(e)}), 500
 
-# --- LÓGICA DE REGISTRO Y LOGIN (REFORZADA) ---
+# --- LÓGICA DE REGISTRO Y LOGIN ---
 
 @app.route('/registrar', methods=['POST'])
 def registrar():
     try:
         datos = request.json
         email = datos.get('email')
-
         if Usuario.query.filter_by(email=email).first():
             return jsonify({"mensaje": "Este correo ya está registrado"}), 400
-
         nuevo_rol = datos.get('rol', 'cliente')
-
         nuevo_usuario = Usuario(
             nombre=datos.get('nombre'),
             apellido=datos.get('apellido'),
@@ -231,7 +284,7 @@ def registrar():
             email=email,
             password=generate_password_hash(datos.get('password')),
             rol=nuevo_rol,
-            verificado=False # Todos empiezan sin verificar
+            verificado=False
         )
         db.session.add(nuevo_usuario)
         db.session.commit()
@@ -245,7 +298,6 @@ def login():
     try:
         datos = request.json
         usuario = Usuario.query.filter_by(email=datos.get('email')).first()
-        
         if usuario and check_password_hash(usuario.password, datos.get('password')):
             return jsonify({
                 "mensaje": "Bienvenido",
@@ -257,7 +309,6 @@ def login():
                     "verificado": usuario.verificado
                 }
             }), 200
-        
         return jsonify({"mensaje": "Correo o contraseña incorrectos"}), 401
     except Exception as e:
         return jsonify({"mensaje": "Error en el servidor"}), 500
@@ -280,10 +331,8 @@ def finalizar_pedido():
     try:
         datos = request.json
         u_id = datos.get('usuario_id') or datos.get('id')
-        
         if not u_id:
             return jsonify({"mensaje": "Error: ID de usuario no identificado"}), 400
-
         nuevo_pedido = Pedido(
             id_usuario=u_id,
             direccion_entrega=datos.get('direccion_entrega', 'Los Teques, Centro'),
@@ -300,12 +349,27 @@ def finalizar_pedido():
 @app.route('/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
     try:
-        # Solo pedidos que nadie ha agarrado
         pedidos = Pedido.query.filter_by(estado='pendiente').all()
         return jsonify([{
             "id": p.id, "direccion": p.direccion_entrega, "total": p.total
         } for p in pedidos]), 200
     except Exception as e:
+        return jsonify({"mensaje": str(e)}), 500
+
+# --- RUTA PARA ACEPTAR PEDIDO ---
+@app.route('/aceptar_pedido/<int:pedido_id>', methods=['POST'])
+def aceptar_pedido(pedido_id):
+    try:
+        datos = request.json
+        pedido = Pedido.query.get(pedido_id)
+        if pedido:
+            pedido.repartidor_id = datos.get('repartidor_id')
+            pedido.estado = 'en camino'
+            db.session.commit()
+            return jsonify({"mensaje": "Pedido aceptado con éxito"}), 200
+        return jsonify({"mensaje": "Pedido no encontrado"}), 404
+    except Exception as e:
+        db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
 
 if __name__ == '__main__':
