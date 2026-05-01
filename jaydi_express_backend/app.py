@@ -111,6 +111,19 @@ def aprobar_repartidor(user_id):
         db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500
 
+# --- EL ENGRANAJE NUEVO QUE FALTABA PARA FLUTTER ---
+@app.route('/verificar_estatus/<int:user_id>', methods=['GET'])
+def verificar_estatus(user_id):
+    try:
+        usuario = Usuario.query.get(user_id)
+        if usuario:
+            # Le responde a la app de Flutter si ya lo aprobaste (True) o no (False)
+            return jsonify({"verificado": usuario.verificado}), 200
+        return jsonify({"mensaje": "Usuario no encontrado"}), 404
+    except Exception as e:
+        return jsonify({"mensaje": str(e)}), 500
+# ----------------------------------------------------
+
 # --- LÓGICA DE REGISTRO Y LOGIN (REFORZADA) ---
 
 @app.route('/registrar', methods=['POST'])
