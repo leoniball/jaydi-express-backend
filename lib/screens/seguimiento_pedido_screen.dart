@@ -41,7 +41,7 @@ class _SeguimientoPedidoScreenState extends State<SeguimientoPedidoScreen> {
     try {
       // Consultamos el servidor en Render que conecta con Neon
       final response = await http.get(
-        Uri.parse('https://jaydi-server.onrender.com/perfil/${widget.repartidorId}')
+        Uri.parse('https://jaydi-delivery-serverv.onrender.com/perfil/${widget.repartidorId}')
       );
 
       if (response.statusCode == 200) {

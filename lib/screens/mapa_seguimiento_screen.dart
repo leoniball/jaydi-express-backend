@@ -67,7 +67,7 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
   Future<void> _obtenerUbicacionServidor() async {
     try {
       final response = await http.get(
-        Uri.parse('https://jaydi-server.onrender.com/estado_pedido/${widget.idPedido}')
+        Uri.parse('https://jaydi-delivery-serverv.onrender.com/estado_pedido/${widget.idPedido}')
       );
 
       if (response.statusCode == 200) {
