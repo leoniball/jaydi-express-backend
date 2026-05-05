@@ -1,14 +1,21 @@
 import 'package:latlong2/latlong.dart';
-
 class EstadoVenezuela {
   final String nombre;
   final LatLng centro;
 
+  // Quitamos el const del constructor para que no pelee con los LatLng de Mapbox
   EstadoVenezuela({required this.nombre, required this.centro});
 }
 
 class VenezuelaData {
-  static List<EstadoVenezuela> estados = [
+  // Coordenadas de las sedes (Sincronizadas con Jaydi Express en Los Teques)
+  static final List<LatLng> sedesJaydi = [
+    const LatLng(10.3444, -67.0433), // Los Teques (Principal)
+    const LatLng(10.4806, -66.9036), // Caracas
+    const LatLng(10.2333, -67.4333), // Maracay
+  ];
+
+  static final List<EstadoVenezuela> estados = [
     EstadoVenezuela(nombre: "Amazonas", centro: const LatLng(3.1667, -65.8167)),
     EstadoVenezuela(nombre: "Anzoátegui", centro: const LatLng(9.0000, -64.5000)),
     EstadoVenezuela(nombre: "Apure", centro: const LatLng(7.0000, -68.5000)),
@@ -27,16 +34,11 @@ class VenezuelaData {
     EstadoVenezuela(nombre: "Monagas", centro: const LatLng(9.3333, -63.0000)),
     EstadoVenezuela(nombre: "Nueva Esparta", centro: const LatLng(11.0000, -63.9167)),
     EstadoVenezuela(nombre: "Portuguesa", centro: const LatLng(9.0000, -69.2500)),
-    EstadoVenezuela(nombre: "Sucre", centro: const LatLng(10.4167, -63.5000)),
-    EstadoVenezuela(nombre: "Táchira", centro: const LatLng(7.8333, -72.1667)),
-    EstadoVenezuela(nombre: "Trujillo", centro: const LatLng(9.4167, -70.4167)),
-    EstadoVenezuela(nombre: "Vargas (La Guaira)", centro: const LatLng(10.6000, -66.9333)),
+    EstadoVenezuela(nombre: "Sucre", centro: const LatLng(10.4167, -63.7500)),
+    EstadoVenezuela(nombre: "Táchira", centro: const LatLng(7.7500, -72.2500)),
+    EstadoVenezuela(nombre: "Trujillo", centro: const LatLng(9.3667, -70.4333)),
+    EstadoVenezuela(nombre: "Vargas", centro: const LatLng(10.6000, -66.9333)),
     EstadoVenezuela(nombre: "Yaracuy", centro: const LatLng(10.3333, -68.7500)),
-    EstadoVenezuela(nombre: "Zulia", centro: const LatLng(10.0000, -72.0000)),
-  ];
-
-  // Aquí agregamos las sedes de Jaydi Express
-  static List<LatLng> sedesJaydi = [
-    const LatLng(10.3444, -67.0433), // Los Teques (Tu ubicación actual)
+    EstadoVenezuela(nombre: "Zulia", centro: const LatLng(10.6667, -71.6667)),
   ];
 }

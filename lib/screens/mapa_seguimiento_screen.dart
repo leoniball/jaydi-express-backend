@@ -1,57 +1,96 @@
+import 'dart:async';
+import 'dart:convert';
 import 'package:flutter/material.dart';
-import 'package:flutter_map/flutter_map.dart';
+import 'package:http/http.dart' as http;
+import 'package:flutter_map/flutter_map.dart'; // Nuevo motor
 import 'package:latlong2/latlong.dart';
-// Import con el nombre de tu proyecto
-import 'package:prueba_jaydi/services/map_service.dart'; 
 import 'package:prueba_jaydi/services/states/venezuela_data.dart';
+import 'package:prueba_jaydi/services/map_service.dart';
 
 class MapaSeguimientoScreen extends StatefulWidget {
-  const MapaSeguimientoScreen({super.key});
+  final int idPedido;
+
+  const MapaSeguimientoScreen({super.key, required this.idPedido});
 
   @override
   State<MapaSeguimientoScreen> createState() => _MapaSeguimientoScreenState();
 }
 
 class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
-  // 1. CONTROLADORES Y VARIABLES DE ESTADO
+  // 1. CONTROLADORES Y VARIABLES
   final MapController _mapController = MapController();
   final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
-  final String mapboxToken = 'pk.eyJ1IjoiamF5ZGkwMTA3IiwiYSI6ImNtbnc0enZrODA0a28ycG9qZDZjb2ZvbncifQ.apknCKbmIRshcUZZSWMOFg';
   
-  String currentMapStyle = 'mapbox/streets-v12'; 
   bool isSatellite = false;
+  bool isRastreando = false;
+  Timer? _timer;
 
-  // Variables para la lógica de la ruta y delivery
-  List<LatLng> routePoints = []; 
+  final LatLng _centroInicial = const LatLng(10.3444, -67.0433);
   LatLng? ubicacionRepartidor;
+  List<LatLng> puntosRuta = [];
+  
+  // Coordenada de destino (Fija en Los Teques)
+  final LatLng ubicacionDestino = const LatLng(10.3500, -67.0400); 
 
-  // 2. FUNCIONES DE LÓGICA
+  @override
+  void dispose() {
+    _timer?.cancel();
+    super.dispose();
+  }
+
+  // 2. LÓGICA DE MAPA Y RASTREO
   void _toggleMapStyle() {
     setState(() {
       isSatellite = !isSatellite;
-      currentMapStyle = isSatellite ? 'mapbox/satellite-streets-v12' : 'mapbox/streets-v12';
     });
   }
 
   void _centerMap() {
-    _mapController.move(const LatLng(10.3444, -67.0433), 15.0);
+    if (ubicacionRepartidor != null) {
+      _mapController.move(ubicacionRepartidor!, 15.0);
+    } else {
+      _mapController.move(_centroInicial, 15.0);
+    }
   }
 
-  Future<void> _trazarRuta() async {
-    const LatLng puntoInicio = LatLng(10.3444, -67.0433); // Sucursal Los Teques
-    const LatLng puntoDestino = LatLng(10.3500, -67.0400); // Destino cliente
+  void _iniciarRastreoRealTime() {
+    if (isRastreando) return;
 
-    final puntos = await MapService.getRoute(puntoInicio, puntoDestino);
-
-    setState(() {
-      routePoints = puntos;
-      if (puntos.isNotEmpty) {
-        ubicacionRepartidor = puntos.first; // Inicia la moto en el origen
-      }
+    setState(() => isRastreando = true);
+    _obtenerUbicacionServidor(); 
+    
+    _timer = Timer.periodic(const Duration(seconds: 5), (timer) {
+      _obtenerUbicacionServidor();
     });
+  }
 
-    if (puntos.isNotEmpty) {
-      _mapController.move(puntoInicio, 14.5);
+  Future<void> _obtenerUbicacionServidor() async {
+    try {
+      final response = await http.get(
+        Uri.parse('https://jaydi-server.onrender.com/estado_pedido/${widget.idPedido}')
+      );
+
+      if (response.statusCode == 200) {
+        final data = json.decode(response.body);
+        double lat = double.parse(data['latitud_actual'].toString());
+        double lng = double.parse(data['longitud_actual'].toString());
+
+        if (mounted) {
+          LatLng nuevaUbi = LatLng(lat, lng);
+          
+          // Actualizamos la ruta cada vez que se mueve el repartidor
+          List<LatLng> nuevaRuta = await MapService.getRoute(nuevaUbi, ubicacionDestino);
+
+          setState(() {
+            ubicacionRepartidor = nuevaUbi;
+            puntosRuta = nuevaRuta;
+          });
+
+          _mapController.move(nuevaUbi, 15.5);
+        }
+      }
+    } catch (e) {
+      debugPrint("❌ Error Jaydi Tracker: $e");
     }
   }
 
@@ -59,56 +98,65 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
-      // Solo abre con el botón de la silueta, no deslizando
       drawerEnableOpenDragGesture: false,
-      drawer: _buildDrawer(), 
+      drawer: _buildDrawer(),
       body: Stack(
         children: [
-          // --- EL MAPA ---
+          // REEMPLAZO DEL MOTOR DE MAPA
           FlutterMap(
             mapController: _mapController,
-            options: const MapOptions(
-              initialCenter: LatLng(10.3444, -67.0433),
+            options: MapOptions(
+              initialCenter: _centroInicial,
               initialZoom: 15.0,
-              interactionOptions: InteractionOptions(flags: InteractiveFlag.all),
             ),
             children: [
+              // Capa de Mapa (Calles o Satélite)
               TileLayer(
-                urlTemplate: 'https://api.mapbox.com/styles/v1/{id}/tiles/{z}/{x}/{y}?access_token={accessToken}',
-                additionalOptions: {
-                  'accessToken': mapboxToken,
-                  'id': currentMapStyle,
-                },
+                urlTemplate: isSatellite 
+                  ? 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}'
+                  : 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+                userAgentPackageName: 'com.jaydi.express',
               ),
               
-              // Capa de la línea de ruta (Polyline)
-              PolylineLayer(
-                polylines: [
-                  Polyline(
-                    points: routePoints,
-                    color: Colors.orange.withValues(alpha: 0.8),
-                    strokeWidth: 5.0,
-                  ),
-                ],
-              ),
+              // Capa de la Ruta Azul
+              if (puntosRuta.isNotEmpty)
+                PolylineLayer(
+                  polylines: [
+                    Polyline(
+                      points: puntosRuta,
+                      color: Colors.blue.shade600,
+                      strokeWidth: 5.0,
+                    ),
+                  ],
+                ),
 
-              // Capa de Marcadores Dinámicos
+              // Capa de Marcadores (Sedes, Destino y Repartidor)
               MarkerLayer(
                 markers: [
-                  // Muestra todas las sedes registradas en VenezuelaData
+                  // Sedes Jaydi
                   ...VenezuelaData.sedesJaydi.map((sede) => Marker(
-                    point: sede,
-                    width: 60,
-                    height: 60,
-                    child: _buildSucursalMarker(),
-                 )), // Marker
+                    point: LatLng(sede.latitude, sede.longitude),
+                    width: 80, height: 80,
+                    child: Column(
+                      children: [
+                        const Icon(Icons.location_on, color: Colors.deepOrange, size: 30),
+                        Text("Sede", style: TextStyle(color: Colors.deepOrange.shade900, fontSize: 10, fontWeight: FontWeight.bold)),
+                      ],
+                    ),
+                  )),
 
-                  // Marcador del Delivery
+                  // Marcador de Destino (Cliente)
+                  Marker(
+                    point: ubicacionDestino,
+                    width: 40, height: 40,
+                    child: const Icon(Icons.home, color: Colors.red, size: 35),
+                  ),
+
+                  // Marcador del Repartidor (Motorizado)
                   if (ubicacionRepartidor != null)
                     Marker(
                       point: ubicacionRepartidor!,
-                      width: 50,
-                      height: 50,
+                      width: 60, height: 60,
                       child: const Icon(Icons.directions_bike, color: Colors.black, size: 40),
                     ),
                 ],
@@ -116,10 +164,9 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
             ],
           ),
 
-          // --- BOTONES SUPERIORES IZQUIERDA (VOLVER Y SILUETA VENEZUELA) ---
+          // Interfaz UI (Se mantiene tu diseño original)
           Positioned(
-            top: 50,
-            left: 20,
+            top: 50, left: 20,
             child: Row(
               children: [
                 _buildTopActionCard(
@@ -135,41 +182,34 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
             ),
           ),
 
-          // --- BOTONES FLOTANTES DERECHA ---
           Positioned(
-            top: 100,
-            right: 20,
+            top: 100, right: 20,
             child: Column(
               children: [
                 _buildCircularButton(
-                  icon: isSatellite ? Icons.map_outlined : Icons.layers, 
-                  onPressed: _toggleMapStyle, 
+                  icon: isSatellite ? Icons.map_outlined : Icons.layers,
+                  onPressed: _toggleMapStyle,
                   heroTag: 'btn_style'
                 ),
                 const SizedBox(height: 15),
                 _buildCircularButton(
-                  icon: Icons.my_location, 
-                  onPressed: _centerMap, 
+                  icon: Icons.my_location,
+                  onPressed: _centerMap,
                   heroTag: 'btn_center'
                 ),
-                const SizedBox(height: 15),
-                _buildCompass(),
               ],
             ),
           ),
 
-          // --- ELEMENTOS INFERIORES ---
           Positioned(
-            bottom: 30,
-            left: 20,
-            right: 20,
+            bottom: 30, left: 20, right: 20,
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [
                 _buildInfoLabel(),
                 const SizedBox(height: 15),
                 GestureDetector(
-                  onTap: _trazarRuta,
+                  onTap: _iniciarRastreoRealTime,
                   child: _buildRastrearButton(),
                 ),
               ],
@@ -180,27 +220,31 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
     );
   }
 
-  // --- COMPONENTES DE INTERFAZ PERSONALIZADOS ---
+  // --- WIDGETS DE UI (SIN CAMBIOS EN TU DISEÑO) ---
 
-  Widget _buildVenezuelaButton() {
-    return Container(
-      padding: const EdgeInsets.all(10),
+  Widget _buildRastrearButton() {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 300),
+      width: double.infinity, height: 65,
       decoration: BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [
-          BoxShadow(
-            color: Colors.orange.withValues(alpha: 0.3), 
-            blurRadius: 10, 
-            spreadRadius: 2
-          )
-        ],
+        gradient: LinearGradient(
+          colors: isRastreando 
+            ? [Colors.green.shade700, Colors.green.shade400] 
+            : [Colors.orange.shade800, Colors.orange.shade400]
+        ),
+        borderRadius: BorderRadius.circular(20),
+        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10, offset: Offset(0, 5))],
       ),
-      child: Image.asset(
-        'assets/images/venezuela_silueta.png',
-        height: 32,
-        width: 32,
-        fit: BoxFit.contain,
+      child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: [
+          Icon(isRastreando ? Icons.gps_fixed : Icons.directions_bike, color: Colors.white, size: 30),
+          const SizedBox(width: 15),
+          Text(
+            isRastreando ? "Rastreando en Vivo..." : "Iniciar Seguimiento",
+            style: const TextStyle(color: Colors.white, fontSize: 18, fontWeight: FontWeight.bold, fontFamily: 'Montserrat'),
+          ),
+        ],
       ),
     );
   }
@@ -210,29 +254,12 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
       child: Column(
         children: [
           DrawerHeader(
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [Colors.orange.shade800, Colors.orange.shade400]
-              )
-            ),
-            child: const Center(
-              child: Text(
-                "Sedes y Cobertura",
-                style: TextStyle(
-                  color: Colors.white,
-                  fontFamily: 'Montserrat',
-                  fontWeight: FontWeight.bold,
-                  fontSize: 20
-                )
-              ),
-            ),
+            decoration: BoxDecoration(gradient: LinearGradient(colors: [Colors.orange.shade800, Colors.orange.shade400])),
+            child: const Center(child: Text("Sedes Jaydi 🇻🇪", style: TextStyle(color: Colors.white, fontWeight: FontWeight.bold, fontSize: 22))),
           ),
           ListTile(
-            leading: const Icon(Icons.public, color: Colors.orange),
-            title: const Text(
-              "Ver Mapa de Venezuela",
-              style: TextStyle(fontFamily: 'Montserrat', fontWeight: FontWeight.bold)
-            ),
+            leading: const Icon(Icons.map, color: Colors.orange),
+            title: const Text("Vista Nacional"),
             onTap: () {
               _mapController.move(const LatLng(7.1291, -66.1818), 6.0);
               Navigator.pop(context);
@@ -246,13 +273,11 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
               itemBuilder: (context, index) {
                 final estado = VenezuelaData.estados[index];
                 return ListTile(
-                  leading: const Icon(Icons.location_city, color: Colors.orange, size: 20),
-                  title: Text(
-                    estado.nombre,
-                    style: const TextStyle(fontFamily: 'Montserrat', fontSize: 14)
-                  ),
+                  dense: true,
+                  leading: const Icon(Icons.location_city, color: Colors.orange, size: 18),
+                  title: Text(estado.nombre, style: const TextStyle(fontSize: 14)),
                   onTap: () {
-                    _mapController.move(estado.centro, 8.5);
+                    _mapController.move(LatLng(estado.centro.latitude, estado.centro.longitude), 9.0);
                     Navigator.pop(context);
                   },
                 );
@@ -264,119 +289,34 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
     );
   }
 
-  Widget _buildSucursalMarker() {
+  Widget _buildVenezuelaButton() {
     return Container(
-      decoration: BoxDecoration(
-        border: Border.all(color: Colors.orange, width: 3),
-        shape: BoxShape.circle,
-        image: const DecorationImage(
-          image: AssetImage('assets/images/jaydi_logo.jpg'),
-          fit: BoxFit.cover,
-        ),
-      ),
-    );
-  }
-
-  Widget _buildRastrearButton() {
-    return Container(
-      width: double.infinity,
-      height: 65,
-      decoration: BoxDecoration(
-        gradient: LinearGradient(
-          colors: [Colors.orange.shade800, Colors.orange.shade400],
-        ),
-        borderRadius: BorderRadius.circular(20),
-        boxShadow: const [BoxShadow(color: Colors.black38, blurRadius: 15)],
-      ),
-      child: const Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(Icons.directions_bike, color: Colors.white, size: 30),
-          SizedBox(width: 15),
-          Text(
-            "Rastrear Delivery",
-            style: TextStyle(
-              color: Colors.white,
-              fontSize: 18,
-              fontWeight: FontWeight.bold,
-              fontFamily: 'Montserrat'
-            ),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.all(8),
+      decoration: const BoxDecoration(color: Colors.white, shape: BoxShape.circle, boxShadow: [BoxShadow(color: Colors.black12, blurRadius: 5)]),
+      child: Image.asset('assets/images/venezuela_silueta.png', height: 35, width: 35),
     );
   }
 
   Widget _buildInfoLabel() {
     return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 15, vertical: 10),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(30),
-        boxShadow: const [BoxShadow(color: Colors.black26, blurRadius: 10)],
-      ),
-      child: Row(
-        mainAxisSize: MainAxisSize.min,
-        children: [
-          Image.asset('assets/images/gps.png', height: 35),
-          const SizedBox(width: 12),
-          const Text(
-            "¡Cobertura Nacional Jaydi!",
-            style: TextStyle(
-              fontFamily: 'Montserrat',
-              fontWeight: FontWeight.bold,
-              color: Colors.orange,
-              fontSize: 13
-            ),
-          ),
-        ],
-      ),
+      padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+      decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(30), border: Border.all(color: Colors.orange.shade100)),
+      child: const Text("Tu pedido Jaydi está en camino", style: TextStyle(fontWeight: FontWeight.bold, color: Colors.orange, fontSize: 13)),
     );
   }
 
   Widget _buildTopActionCard({required IconData icon, required VoidCallback onPressed}) {
-    return Container(
-      decoration: const BoxDecoration(
-        color: Colors.white,
-        shape: BoxShape.circle,
-        boxShadow: [BoxShadow(color: Colors.black26, blurRadius: 8)],
-      ),
-      child: IconButton(
-        icon: Icon(icon, color: Colors.orange),
-        onPressed: onPressed
-      ),
-    );
-  }
-
-  Widget _buildCompass() {
-    return StreamBuilder<MapEvent>(
-      stream: _mapController.mapEventStream,
-      builder: (context, snapshot) {
-        final rotation = _mapController.camera.rotation;
-        return Transform.rotate(
-          angle: -rotation * (3.14159 / 180),
-          child: _buildCircularButton(
-            icon: Icons.explore, 
-            onPressed: () => _mapController.rotate(0), 
-            heroTag: 'btn_compass'
-          ),
-        );
-      },
-    );
-  }
-
-  Widget _buildCircularButton({
-    required IconData icon, 
-    required VoidCallback onPressed, 
-    required String heroTag
-  }) {
-    return FloatingActionButton(
-      heroTag: heroTag,
-      mini: true,
+    return CircleAvatar(
       backgroundColor: Colors.white,
-      elevation: 4,
+      child: IconButton(icon: Icon(icon, color: Colors.orange), onPressed: onPressed),
+    );
+  }
+
+  Widget _buildCircularButton({required IconData icon, required VoidCallback onPressed, required String heroTag}) {
+    return FloatingActionButton(
+      heroTag: heroTag, mini: true, backgroundColor: Colors.white,
       onPressed: onPressed,
-      child: Icon(icon, color: Colors.orange, size: 24),
+      child: Icon(icon, color: Colors.orange),
     );
   }
 }

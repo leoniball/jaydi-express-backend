@@ -1,3 +1,5 @@
+import 'package:flutter/material.dart';
+
 class Traductor {
   static String obtener(String llave, String lang) {
     String idioma = lang.isEmpty ? 'es' : lang;
@@ -119,7 +121,7 @@ class Traductor {
         'error_auth': '用户名或密码无效',
         'guardar': '保存更改', 'perfil_editado': '个人资料更新成功！',
         // --- AUTOPAGO JAYDI ---
-        'costo_productos': '产品成本', 'iva': '增值税 (16%)',
+        '产品成本': 'Product Cost', 'iva': '增值税 (16%)',
         // --- SEGURIDAD & VALIDACIÓN ---
         'error_invitado_compra': '您必须注册才能将产品添加到购物车',
         'error_invitado_perfil': '只有注册用户才能编辑其个人资料',
@@ -130,3 +132,6 @@ class Traductor {
     return dics[idioma]?[llave] ?? dics['es']![llave] ?? llave;
   }
 }
+
+// Variable global para notificar cambios de idioma en toda la app
+ValueNotifier<String> idiomaGlobal = ValueNotifier<String>('es');

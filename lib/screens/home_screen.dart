@@ -2,7 +2,7 @@ import 'package:flutter/material.dart';
 import 'dart:async';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/producto_carrito.dart';
-import '../models/idiomas.dart';
+import '../models/idiomas.dart'; // <--- Déjalo así solito
 import '../widgets/product_card.dart';
 import 'auth_screen.dart';
 import 'carrito_screen.dart';
@@ -11,8 +11,8 @@ import 'mapa_seguimiento_screen.dart';
 import 'chat_screen.dart'; 
 import 'notificaciones_screen.dart'; 
 import 'package:prueba_jaydi/services/api_service.dart';
-// Asegúrate de que la ruta coincida con donde creaste el archivo
 
+// Notificadores globales
 ValueNotifier<List<ProductoCarrito>> carritoNotifier = ValueNotifier([]);
 ValueNotifier<int> notificacionesNotifier = ValueNotifier(0); 
 
@@ -99,7 +99,6 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
     );
   }
 
-  // --- NUEVA MEJORÍA: Menú con Soporte Técnico y validación de Invitados ---
   void _mostrarMenuServicios(String lang) {
     showModalBottomSheet(
       context: context,
@@ -120,32 +119,30 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
                 if (widget.userName == "Invitado") {
                    _mostrarErrorSeguridad("Regístrese para obtener estos servicios de Jaydi");
                 } else {
-                   Navigator.push(context, MaterialPageRoute(builder: (_) => const MapaSeguimientoScreen()));
+                   Navigator.push(context, MaterialPageRoute(builder: (_) => const MapaSeguimientoScreen(idPedido: 1)));
                 }
               },
             ),
             ListTile(
-              leading: Icon(Icons.support_agent, color: naranjaJaydi), // --- NUEVO: Icono de Soporte ---
+              leading: Icon(Icons.support_agent, color: naranjaJaydi),
               title: Text(lang == 'es' ? 'Soporte Técnico (Chat Directo)' : 'Technical Support'),
               onTap: () {
                 Navigator.pop(context);
                 if (widget.userName == "Invitado") {
                    _mostrarErrorSeguridad("Regístrese para obtener estos servicios de Jaydi");
                 } else {
-                   // Aquí irá el chat directo cliente-soporte
                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen()));
                 }
               },
             ),
             ListTile(
-              leading: Icon(Icons.delivery_dining, color: naranjaJaydi), // --- NUEVO: Icono de Domiciliario ---
+              leading: Icon(Icons.delivery_dining, color: naranjaJaydi),
               title: Text(lang == 'es' ? 'Chat con Domiciliario' : 'Chat with Courier'),
               onTap: () {
                 Navigator.pop(context);
                 if (widget.userName == "Invitado") {
                    _mostrarErrorSeguridad("Regístrese para obtener estos servicios de Jaydi");
                 } else {
-                   // Aquí irá la lógica de mensajes predeterminados para el domiciliario
                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen()));
                 }
               },
@@ -180,14 +177,15 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
           body: Container(
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                begin: Alignment.topLeft,
-                end: Alignment.bottomRight,
-                colors: [
-                  azulJaydi.withValues(alpha: 0.08),
-                  Colors.white,
-                  naranjaJaydi.withValues(alpha: 0.05),
-                ],
-              ),
+  begin: Alignment.topLeft,
+  end: Alignment.bottomRight,
+  colors: [
+    // CAMBIO AQUÍ: Usamos withValues en vez de withOpacity
+    azulJaydi.withValues(alpha: 0.08), 
+    Colors.white,
+    naranjaJaydi.withValues(alpha: 0.05),
+  ],
+),
             ),
             child: SafeArea(
               child: Column(
@@ -350,7 +348,6 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
     );
   }
 
-  // --- NUEVA MEJORÍA: Recuperado el texto estético y optimizado con Flexible/Expanded ---
   Widget _buildSuperiorHeader(String lang) {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
@@ -365,27 +362,24 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
         Row(children: [
           const SizedBox(width: 10), 
           Image.asset('assets/images/jaydi_logo.jpg', height: 35),
-          const Expanded(child: SizedBox()), // Empuja los elementos a los lados
+          const Expanded(child: SizedBox()), 
 
           IconButton(
-  icon: const Icon(Icons.notifications_none, color: Colors.white, size: 24),
- onPressed: () async {
-  debugPrint("🔥 Probando el NUEVO registro con contraseña...");
-  
-  // Usamos la nueva función que creamos en ApiService
-  bool exito = await ApiService.registrarUsuario(
-    "Nick Real", 
-    "nick_pro@jaydi.com", 
-    "123456" // Ahora mandamos contraseña
-  );
-
-  if (exito) {
-    debugPrint("✅ ¡SÍ! Usuario con contraseña guardado en Neon");
-  } else {
-    debugPrint("❌ Falló: Quizás el correo ya existe o el servidor está caído");
-  }
-},
-),
+            icon: const Icon(Icons.notifications_none, color: Colors.white, size: 24),
+            onPressed: () async {
+              debugPrint("🔥 Probando el NUEVO registro con contraseña...");
+              bool exito = await ApiService.registrarUsuario(
+                "Nick Real", 
+                "nick_pro@jaydi.com", 
+                "123456"
+              );
+              if (exito) {
+                debugPrint("✅ ¡SÍ! Usuario con contraseña guardado en Neon");
+              } else {
+                debugPrint("❌ Falló: Quizás el correo ya existe o el servidor está caído");
+              }
+            },
+          ),
 
           TextButton(
             onPressed: widget.userName == "Invitado" ? () => Navigator.push(context, MaterialPageRoute(builder: (_) => const AuthScreen())) : _logout, 
@@ -395,27 +389,26 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
             )
           ),
 
-         // --- AQUÍ EMPIEZA LO NUEVO ---
-      const SizedBox(width: 5), 
+          const SizedBox(width: 5), 
 
-      Flexible(
-        child: Text(
-          "Compra con Jaydi", // Texto acortado
-          style: const TextStyle(
-            color: Colors.white,
-            fontSize: 8, // Un poco más pequeño para asegurar el espacio
-            fontWeight: FontWeight.bold,
-            fontFamily: 'Montserrat',
-          ),
-          maxLines: 1,
-          overflow: TextOverflow.ellipsis,
-        ),
-      ),
+          // Línea 393 en tu imagen
+const Flexible(
+  child: Text(
+    "Compra con Jaydi",
+    style: TextStyle(
+      color: Colors.white,
+      fontSize: 8,
+      fontWeight: FontWeight.bold,
+      fontFamily: 'Montserrat', // Manteniendo tu fuente Montserrat
+    ),
+    maxLines: 1,
+    overflow: TextOverflow.ellipsis,
+  ),
+),
 
-      const Icon(Icons.arrow_forward, color: Colors.amber, size: 10),
-      const SizedBox(width: 5), 
+          const Icon(Icons.arrow_forward, color: Colors.amber, size: 10),
+          const SizedBox(width: 5), 
 
-      
           GestureDetector(
             onTap: () {
               if (widget.userName == "Invitado") { 
@@ -473,7 +466,6 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
     return FutureBuilder<List<dynamic>>(
       future: ApiService.obtenerProductos(),
       builder: (context, snapshot) {
-        // 1. Mientras esperamos la respuesta de Python/Neon
         if (snapshot.connectionState == ConnectionState.waiting) {
           return const Center(
             child: Padding(
@@ -483,11 +475,10 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
           );
         }
 
-        // 2. Si hay error o la lista está vacía
         if (snapshot.hasError || snapshot.data == null || snapshot.data!.isEmpty) {
           return Center(
             child: Text(
-              Traductor.obtener('error_cargar_productos', lang), // O un texto fijo si no tienes la traducción
+              Traductor.obtener('error_cargar_productos', lang),
               style: const TextStyle(color: Colors.grey),
             ),
           );
@@ -495,7 +486,6 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
 
         final productos = snapshot.data!;
 
-        // 3. La vitrina con datos reales
         return GridView.builder(
           shrinkWrap: true,
           physics: const NeverScrollableScrollPhysics(),
@@ -509,7 +499,6 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
           itemBuilder: (context, i) {
             final p = productos[i];
             return ProductCard(
-              // Pasamos los datos exactos que vienen de la nube
               producto: {
                 'id': p['id'],
                 'n': p['nombre'],

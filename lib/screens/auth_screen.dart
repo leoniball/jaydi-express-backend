@@ -1,11 +1,11 @@
 import 'package:prueba_jaydi/services/api_service.dart';
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
-import '../models/idiomas.dart'; 
+import '../models/idiomas.dart'; // <--- ESTE TRAE EL IDIOMAGLOBAL REAL
 import 'home_screen.dart';
 import '../database/db_helper.dart'; 
 
-ValueNotifier<String> idiomaGlobal = ValueNotifier("es");
+// SE ELIMINÓ LA LÍNEA DE IDIOMAGLOBAL AQUÍ PORQUE YA ESTÁ EN IDIOMAS.DART
 
 class AuthScreen extends StatefulWidget {
   const AuthScreen({super.key});
@@ -71,15 +71,12 @@ class _AuthScreenState extends State<AuthScreen> {
             
             final datosUsuario = resultadoNube['usuario'];
             
-            // PARSEO SEGURO DEL ID
             int idUsuario = int.tryParse(datosUsuario['id']?.toString() ?? '0') ?? 0;
             String nombreReal = datosUsuario['nombre']?.toString() ?? "Usuario";
             String emailReal = datosUsuario['email']?.toString() ?? "";
 
-            // --- SINCRONIZACIÓN CRÍTICA DE LLAVES ---
-            // Guardamos con ambos nombres para que no falle NINGUNA pantalla
-            await prefs.setInt('user_id_neon', idUsuario); // Nombre que usa el carrito
-            await prefs.setInt('id_usuario_activo', idUsuario); // Nombre que usas en el Home
+            await prefs.setInt('user_id_neon', idUsuario);
+            await prefs.setInt('id_usuario_activo', idUsuario);
             await prefs.setString('ultimo_usuario_activo', emailReal);
             await prefs.setString('nombre_usuario', nombreReal);
             

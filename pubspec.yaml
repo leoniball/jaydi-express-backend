@@ -5,7 +5,7 @@ publish_to: 'none'
 version: 1.0.0+1
 
 environment:
-  sdk: '>=3.11.4 <4.0.0'
+  sdk: '>=3.0.0 <4.0.0'
 
 dependencies:
   flutter:
@@ -13,27 +13,27 @@ dependencies:
   cupertino_icons: ^1.0.8
   
   # --- PERSISTENCIA Y DATOS ---
-  shared_preferences: ^2.5.5
-  sqflite: ^2.4.2
-  path: ^1.9.1
+  shared_preferences: ^2.2.0
+  sqflite: ^2.3.0
+  path: ^1.9.0
   
-  # --- COMUNICACIÓN CON APIS (MAPAS Y CHAT) ---
-  http: ^1.6.0
-  socket_io_client: ^2.0.3 # <--- Para la mensajería en tiempo real con Flask
+  # --- COMUNICACIÓN CON APIS ---
+  http: ^1.1.0
+  socket_io_client: ^2.0.3
 
-  # --- LIBRERÍAS PARA EL MAPA Y UBICACIÓN ---
+  # --- LIBRERÍAS PARA EL MAPA (ESTÁNDAR MODERNO) ---
   flutter_map: ^6.1.0
-  latlong2: ^0.9.0
+  latlong2: ^0.9.1
   geolocator: ^10.1.0 
 
-  # --- NOTIFICACIONES Y SERVICIOS ---
-  flutter_local_notifications: ^17.0.0 # <--- Para mostrar las alertas en el celular
+  # --- NOTIFICACIONES ---
+  flutter_local_notifications: ^17.0.0
 
 dev_dependencies:
   flutter_test:
     sdk: flutter
-  flutter_lints: ^6.0.0
-  flutter_launcher_icons: ^0.13.1
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.11.0
 
 flutter:
   uses-material-design: true

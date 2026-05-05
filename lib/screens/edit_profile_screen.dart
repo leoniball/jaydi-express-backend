@@ -1,7 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../models/idiomas.dart';
-import 'auth_screen.dart'; // Para acceder a idiomaGlobal
 
 class EditProfileScreen extends StatefulWidget {
   const EditProfileScreen({super.key});
