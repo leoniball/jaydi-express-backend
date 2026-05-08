@@ -10,7 +10,7 @@ app = Flask(__name__)
 CORS(app)
 
 # --- CONFIGURACIÓN DE LA BASE DE DATOS (NEON) ---
-DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://neondb_owner:npg_hF4PjcEJq5RO@ep-jolly-waterfall-amgwvrji-pooler.c-5.us-east-1.aws.neon.tech/neondb?sslmode=require')
+DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)

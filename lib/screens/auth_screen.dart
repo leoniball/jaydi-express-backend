@@ -149,7 +149,8 @@ class _AuthScreenState extends State<AuthScreen> {
                         _input(Traductor.obtener('correo', lang), _emailController, Icons.email_rounded, enabled: !_isLoading),
                       ],
                       const SizedBox(height: 15),
-                      _input(Traductor.obtener('clave', lang), _passController, Icons.lock_rounded, isPass: true, len: 12, enabled: !_isLoading),
+                      // AQUÍ ESTÁ EL CAMBIO: Se eliminó "len: 12" de la clave
+                      _input(Traductor.obtener('clave', lang), _passController, Icons.lock_rounded, isPass: true, enabled: !_isLoading),
                       const SizedBox(height: 35),
                       
                       GestureDetector(
