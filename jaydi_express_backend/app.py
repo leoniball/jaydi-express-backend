@@ -23,6 +23,12 @@ if DATABASE_URL.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
+# 🔥 LA VACUNA ANTI-DESCONEXIÓN PARA EXPRESS
+app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
+    "pool_pre_ping": True,  # Verifica si Neon está vivo antes de hablarle
+    "pool_recycle": 300,    # Recicla la conexión cada 5 minutos
+}
+
 db = SQLAlchemy(app)
 
 # --- MODELOS DE DATOS (Sincronizados con Neon) ---
