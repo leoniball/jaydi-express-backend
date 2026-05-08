@@ -6,10 +6,15 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime
 from sqlalchemy import text # Importante para meter comandos SQL crudos a Neon
 
+# --- NUEVO: IMPORTAR Y CARGAR VARIABLES DE ENTORNO OCULTAS ---
+from dotenv import load_dotenv
+load_dotenv()
+
 app = Flask(__name__)
 CORS(app)
 
 # --- CONFIGURACIÓN DE LA BASE DE DATOS (NEON) ---
+# Ahora busca en tu archivo .env, si no lo encuentra, queda vacío (seguro para GitHub)
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 if DATABASE_URL.startswith("postgres://"):
