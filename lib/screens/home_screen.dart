@@ -131,7 +131,15 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
                 if (widget.userName == "Invitado") {
                    _mostrarErrorSeguridad("Regístrese para obtener estos servicios de Jaydi");
                 } else {
-                   Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen()));
+                  Navigator.push(
+  context, 
+  MaterialPageRoute(
+    builder: (context) => const ChatScreen(
+      pedidoId: 0, // Un ID genérico porque no hay un pedido activo seleccionado aquí
+      estadoPedido: 'pendiente', // Esto bloquea el chat hasta que haya un pedido real
+    )
+  )
+);
                 }
               },
             ),
@@ -143,7 +151,15 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
                 if (widget.userName == "Invitado") {
                    _mostrarErrorSeguridad("Regístrese para obtener estos servicios de Jaydi");
                 } else {
-                   Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen()));
+                  Navigator.push(
+  context, 
+  MaterialPageRoute(
+    builder: (context) => const ChatScreen(
+      pedidoId: 0, // Un ID genérico porque no hay un pedido activo seleccionado aquí
+      estadoPedido: 'pendiente', // Esto bloquea el chat hasta que haya un pedido real
+    )
+  )
+);
                 }
               },
             ),
@@ -317,7 +333,15 @@ class _JaydiHomePageState extends State<JaydiHomePage> with SingleTickerProvider
                   if (widget.userName == "Invitado") {
                     _mostrarErrorSeguridad("Regístrese para obtener estos servicios de Jaydi");
                   } else {
-                    Navigator.push(context, MaterialPageRoute(builder: (_) => const ChatScreen()));
+                   Navigator.push(
+  context, 
+  MaterialPageRoute(
+    builder: (context) => const ChatScreen(
+      pedidoId: 0, // Un ID genérico porque no hay un pedido activo seleccionado aquí
+      estadoPedido: 'pendiente', // Esto bloquea el chat hasta que haya un pedido real
+    )
+  )
+);
                   }
                 },
               ),

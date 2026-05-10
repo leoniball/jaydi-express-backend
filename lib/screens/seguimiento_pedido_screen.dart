@@ -4,7 +4,8 @@ import 'package:flutter/material.dart';
 import 'package:http/http.dart' as http;
 import 'package:flutter_map/flutter_map.dart'; // Nuevo motor
 import 'package:latlong2/latlong.dart';
-
+// ---> NUEVO: Importamos el ChatScreen <---
+import 'package:prueba_jaydi/screens/chat_screen.dart'; 
 
 class SeguimientoPedidoScreen extends StatefulWidget {
   final int pedidoId;
@@ -21,6 +22,7 @@ class _SeguimientoPedidoScreenState extends State<SeguimientoPedidoScreen> {
   final MapController _mapController = MapController();
   Timer? _timer;
   LatLng _ubicacionRepartidor = const LatLng(10.3445, -67.0432); // Los Teques por defecto
+  String estadoDelPedido = 'en camino'; // NUEVO: Estado para el chat
 
   @override
   void initState() {
@@ -52,6 +54,8 @@ class _SeguimientoPedidoScreenState extends State<SeguimientoPedidoScreen> {
         if (mounted) {
           setState(() {
             _ubicacionRepartidor = LatLng(lat, lng);
+            // Si el perfil devolviera estado, lo actualizaríamos aquí, 
+            // pero asumimos 'en camino' mientras la pantalla esté activa.
           });
 
           // Movemos la cámara para seguir al repartidor
@@ -63,12 +67,32 @@ class _SeguimientoPedidoScreenState extends State<SeguimientoPedidoScreen> {
     }
   }
 
+  // ---> NUEVO: Función para abrir el chat <---
+  void _abrirChat() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(
+          pedidoId: widget.pedidoId,
+          estadoPedido: estadoDelPedido, // Asumimos en camino
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       appBar: AppBar(
         title: const Text("Sigue tu Pedido - Jaydi", style: TextStyle(fontFamily: 'Montserrat')),
         backgroundColor: Colors.orange.shade800,
+      ),
+      // ---> NUEVO: Botón Flotante para el Chat <---
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'chat_button_seguimiento', // Hero tag único
+        backgroundColor: Colors.orange.shade800,
+        onPressed: _abrirChat,
+        child: const Icon(Icons.chat_bubble, color: Colors.white),
       ),
       body: FlutterMap(
         mapController: _mapController,

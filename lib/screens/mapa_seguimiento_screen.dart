@@ -6,6 +6,8 @@ import 'package:flutter_map/flutter_map.dart'; // Nuevo motor
 import 'package:latlong2/latlong.dart';
 import 'package:prueba_jaydi/services/states/venezuela_data.dart';
 import 'package:prueba_jaydi/services/map_service.dart';
+// ---> NUEVO: Importamos el ChatScreen <---
+import 'package:prueba_jaydi/screens/chat_screen.dart'; 
 
 class MapaSeguimientoScreen extends StatefulWidget {
   final int idPedido;
@@ -24,6 +26,7 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
   bool isSatellite = false;
   bool isRastreando = false;
   Timer? _timer;
+  String estadoDelPedido = 'en camino'; // NUEVO: Asumimos que está en camino si se rastrea
 
   final LatLng _centroInicial = const LatLng(10.3444, -67.0433);
   LatLng? ubicacionRepartidor;
@@ -74,6 +77,9 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
         final data = json.decode(response.body);
         double lat = double.parse(data['latitud_actual'].toString());
         double lng = double.parse(data['longitud_actual'].toString());
+        
+        // NUEVO: Actualizamos el estado del pedido por si el domiciliario ya lo entregó
+        String nuevoEstado = data['estado'] ?? 'en camino';
 
         if (mounted) {
           LatLng nuevaUbi = LatLng(lat, lng);
@@ -84,6 +90,7 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
           setState(() {
             ubicacionRepartidor = nuevaUbi;
             puntosRuta = nuevaRuta;
+            estadoDelPedido = nuevoEstado; // Actualiza el estado
           });
 
           _mapController.move(nuevaUbi, 15.5);
@@ -94,12 +101,34 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
     }
   }
 
+  // ---> NUEVO: Función para abrir el chat <---
+  void _abrirChat() {
+    Navigator.push(
+      context,
+      MaterialPageRoute(
+        builder: (context) => ChatScreen(
+          pedidoId: widget.idPedido,
+          estadoPedido: estadoDelPedido, // Le pasamos el estado actual
+        ),
+      ),
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       key: _scaffoldKey,
       drawerEnableOpenDragGesture: false,
       drawer: _buildDrawer(),
+      // ---> NUEVO: Botón Flotante para el Chat <---
+      floatingActionButton: FloatingActionButton(
+        heroTag: 'chat_button_mapa', // Hero tag único
+        backgroundColor: Colors.orange.shade800,
+        onPressed: _abrirChat,
+        child: const Icon(Icons.chat_bubble, color: Colors.white),
+      ),
+      // Mueve el botón flotante un poco arriba para no chocar con tu barra inferior
+      floatingActionButtonLocation: FloatingActionButtonLocation.endFloat, 
       body: Stack(
         children: [
           // REEMPLAZO DEL MOTOR DE MAPA
@@ -202,7 +231,7 @@ class _MapaSeguimientoScreenState extends State<MapaSeguimientoScreen> {
           ),
 
           Positioned(
-            bottom: 30, left: 20, right: 20,
+            bottom: 30, left: 20, right: 20, // Ajuste aquí, el FAB quedará arriba de esto
             child: Column(
               mainAxisSize: MainAxisSize.min,
               children: [

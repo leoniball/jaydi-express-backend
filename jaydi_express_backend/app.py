@@ -14,7 +14,6 @@ app = Flask(__name__)
 CORS(app)
 
 # --- CONFIGURACIÓN DE LA BASE DE DATOS (NEON) ---
-# Ahora busca en tu archivo .env, si no lo encuentra, queda vacío (seguro para GitHub)
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 if DATABASE_URL.startswith("postgres://"):
@@ -87,6 +86,15 @@ class Pedido(db.Model):
     # NUEVOS: Para rastrear el pedido específico en el mapa
     latitud_actual = db.Column(db.Float, nullable=True)
     longitud_actual = db.Column(db.Float, nullable=True)
+
+# ---> NUEVO MODELO DE MENSAJES AÑADIDO AQUÍ <---
+class Mensaje(db.Model):
+    __tablename__ = 'mensajes'
+    id = db.Column(db.Integer, primary_key=True)
+    pedido_id = db.Column(db.Integer, db.ForeignKey('pedidos.id'), nullable=False)
+    remitente_tipo = db.Column(db.String(20), nullable=False) # 'cliente' o 'domiciliario'
+    texto = db.Column(db.Text, nullable=False)
+    fecha = db.Column(db.DateTime, default=datetime.utcnow)
 
 # Sincronización automática de tablas al iniciar
 with app.app_context():
@@ -367,7 +375,6 @@ def pedidos_disponibles():
     except Exception as e:
         return jsonify({"mensaje": str(e)}), 500
 
-# --- RUTA PARA ACEPTAR PEDIDO ---
 @app.route('/aceptar_pedido/<int:pedido_id>', methods=['POST'])
 def aceptar_pedido(pedido_id):
     try:
@@ -379,6 +386,53 @@ def aceptar_pedido(pedido_id):
             db.session.commit()
             return jsonify({"mensaje": "Pedido aceptado con éxito"}), 200
         return jsonify({"mensaje": "Pedido no encontrado"}), 404
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"mensaje": str(e)}), 500
+
+# ---> NUEVAS RUTAS DE MENSAJERÍA AÑADIDAS AQUÍ <---
+
+@app.route('/api/chat/<int:pedido_id>', methods=['GET'])
+def obtener_mensajes(pedido_id):
+    try:
+        # Obtener historial ordenado por fecha
+        mensajes = Mensaje.query.filter_by(pedido_id=pedido_id).order_by(Mensaje.fecha.asc()).all()
+        return jsonify([{
+            'id': m.id,
+            'remitente_tipo': m.remitente_tipo,
+            'texto': m.texto,
+            'fecha': m.fecha.strftime('%Y-%m-%d %H:%M:%S')
+        } for m in mensajes]), 200
+    except Exception as e:
+        return jsonify({"mensaje": str(e)}), 500
+
+@app.route('/api/chat/enviar', methods=['POST'])
+def enviar_mensaje():
+    try:
+        datos = request.json
+        pedido_id = datos.get('pedido_id')
+        
+        pedido = Pedido.query.get(pedido_id)
+        if not pedido:
+            return jsonify({'error': 'Pedido no encontrado'}), 404
+            
+        # REGLA 1: Solo se activa si el domiciliario aceptó (estado no es 'pendiente')
+        if pedido.estado == 'pendiente':
+            return jsonify({'error': 'El chat se activará cuando un domiciliario acepte el pedido.'}), 403
+            
+        # REGLA 2: Si está entregado, ya no se pueden enviar mensajes
+        if pedido.estado == 'entregado':
+            return jsonify({'error': 'El pedido ya fue entregado. Chat cerrado.'}), 403
+
+        nuevo_mensaje = Mensaje(
+            pedido_id=pedido_id,
+            remitente_tipo=datos.get('remitente_tipo'),
+            texto=datos.get('texto')
+        )
+        db.session.add(nuevo_mensaje)
+        db.session.commit()
+        
+        return jsonify({'status': 'success', 'mensaje': 'Enviado correctamente'}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"mensaje": str(e)}), 500

@@ -6,7 +6,8 @@ class ApiService {
   // URL ÚNICA DE PRODUCCIÓN (Basada en tus capturas de Render)
   // IMPORTANTE: Asegúrate de que no tenga espacios ni barras al final
   // URL ÚNICA DE PRODUCCIÓN 
-static const String baseUrl = 'https://jaydi-delivery-serverv.onrender.com';
+  static const String baseUrl = 'https://jaydi-delivery-serverv.onrender.com';
+  
   // --- 1. FUNCIÓN PARA REGISTRAR ---
   static Future<bool> registrarUsuario(String nombre, String email, String password) async {
     final url = Uri.parse('$baseUrl/registrar');
@@ -169,6 +170,52 @@ static const String baseUrl = 'https://jaydi-delivery-serverv.onrender.com';
       }
     } catch (e) {
       debugPrint("❌ ERROR DE RED AL ACEPTAR PEDIDO: $e");
+      return false;
+    }
+  }
+
+  // ---> NUEVO: 7. FUNCIÓN PARA OBTENER MENSAJES (Chat) <---
+  static Future<List<dynamic>> obtenerMensajes(int pedidoId) async {
+    final url = Uri.parse('$baseUrl/api/chat/$pedidoId');
+
+    try {
+      final response = await http.get(url);
+
+      if (response.statusCode == 200) {
+        return jsonDecode(response.body);
+      } else {
+        debugPrint("❌ ERROR AL CARGAR MENSAJES: ${response.statusCode}");
+        return [];
+      }
+    } catch (e) {
+      debugPrint("❌ ERROR DE RED EN CHAT: $e");
+      return [];
+    }
+  }
+
+  // ---> NUEVO: 8. FUNCIÓN PARA ENVIAR MENSAJE (Chat) <---
+  static Future<bool> enviarMensaje(int pedidoId, String remitenteTipo, String texto) async {
+    final url = Uri.parse('$baseUrl/api/chat/enviar');
+
+    try {
+      final response = await http.post(
+        url,
+        headers: {'Content-Type': 'application/json'},
+        body: jsonEncode({
+          'pedido_id': pedidoId,
+          'remitente_tipo': remitenteTipo, // Será 'cliente' desde esta app
+          'texto': texto,
+        }),
+      );
+
+      if (response.statusCode == 200) {
+        return true;
+      } else {
+        debugPrint("❌ ERROR AL ENVIAR MENSAJE: ${response.body}");
+        return false;
+      }
+    } catch (e) {
+      debugPrint("❌ ERROR DE RED AL ENVIAR MENSAJE: $e");
       return false;
     }
   }
