@@ -90,6 +90,9 @@ class Pedido(db.Model):
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
     latitud_actual = db.Column(db.Float, nullable=True)
     longitud_actual = db.Column(db.Float, nullable=True)
+    # 👉 NUEVO: Coordenadas Reales del Cliente para el Mapa
+    latitud_destino = db.Column(db.Float, nullable=True)
+    longitud_destino = db.Column(db.Float, nullable=True)
 
 class Mensaje(db.Model):
     __tablename__ = 'mensajes'
@@ -149,6 +152,11 @@ def actualizar_bd_perfil():
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN latitud_actual FLOAT;'))
         except: pass
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_actual FLOAT;'))
+        except: pass
+        # 👉 NUEVAS: Protección por si acaso
+        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN latitud_destino FLOAT;'))
+        except: pass
+        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_destino FLOAT;'))
         except: pass
         db.session.commit()
         return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada."}), 200
@@ -361,6 +369,23 @@ def finalizar_pedido():
         db.session.rollback()
         print("ERROR EN FINALIZAR PEDIDO:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
+
+# 👉 NUEVO: Endpoint Real para traer las coordenadas del destino al Delivery
+@app.route('/obtener_pedido/<int:pedido_id>', methods=['GET'])
+def obtener_pedido(pedido_id):
+    try:
+        pedido = Pedido.query.get(pedido_id)
+        if pedido:
+            return jsonify({
+                "id": pedido.id,
+                "direccion": pedido.direccion_entrega,
+                "latitud_destino": pedido.latitud_destino,
+                "longitud_destino": pedido.longitud_destino
+            }), 200
+        return jsonify({"error": "Pedido no encontrado"}), 404
+    except Exception as e:
+        print("ERROR EN OBTENER PEDIDO:\n", traceback.format_exc())
+        return jsonify({"error": str(e)}), 500
 
 @app.route('/pedidos_disponibles', methods=['GET'])
 @app.route('/api/delivery/pedidos_disponibles', methods=['GET'])
