@@ -1,4 +1,5 @@
 import os
+import traceback
 from flask import Flask, jsonify, request, render_template, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
@@ -158,10 +159,13 @@ def actualizar_bd_perfil():
 # --- LÓGICA DE REGISTRO Y LOGIN (UNIFICADA PARA AMBAS APPS) ---
 
 @app.route('/registrar', methods=['POST'])
-@app.route('/registro', methods=['POST']) # Alias para Delivery
+@app.route('/registro', methods=['POST']) 
 def registrar():
     try:
-        datos = request.json
+        datos = request.get_json()
+        if not datos:
+            return jsonify({"status": "error", "mensaje": "Datos JSON no recibidos", "error": "No JSON payload"}), 400
+            
         email = datos.get('email', '').strip().lower()
         if Usuario.query.filter_by(email=email).first():
             return jsonify({"status": "error", "mensaje": "Este correo ya está registrado", "error": "El email ya existe"}), 400
@@ -187,16 +191,19 @@ def registrar():
             "status": "pendiente",
             "rol": nuevo_rol
         }
-        # Retorna 'usuario' (para Express) y 'userData' (para Delivery)
         return jsonify({"status": "success", "mensaje": "Usuario creado con éxito", "rol": nuevo_rol, "usuario": user_data, "userData": user_data}), 201
     except Exception as e:
         db.session.rollback()
-        return jsonify({"status": "error", "mensaje": f"Error en registro: {str(e)}", "error": str(e)}), 400
+        print("ERROR EN REGISTRO:\n", traceback.format_exc())
+        return jsonify({"status": "error", "mensaje": f"Error en registro: {str(e)}", "error": str(e)}), 500
 
 @app.route('/login', methods=['POST'])
 def login():
     try:
-        datos = request.json
+        datos = request.get_json()
+        if not datos:
+            return jsonify({"status": "error", "mensaje": "Datos JSON vacíos"}), 400
+            
         email = datos.get('email', '').strip().lower()
         usuario = Usuario.query.filter_by(email=email).first()
         
@@ -213,7 +220,6 @@ def login():
                 "status": "aprobado" if usuario.verificado else "pendiente",
                 "es_verificado": usuario.verificado
             }
-            # Estructura dual para que Express y Delivery lo puedan leer
             return jsonify({
                 "status": "success",
                 "mensaje": "Bienvenido",
@@ -222,6 +228,7 @@ def login():
             }), 200
         return jsonify({"status": "error", "mensaje": "Correo o contraseña incorrectos", "error": "Credenciales inválidas"}), 401
     except Exception as e:
+        print("ERROR EN LOGIN:\n", traceback.format_exc())
         return jsonify({"status": "error", "mensaje": "Error en el servidor", "error": str(e)}), 500
 
 # --- PERFIL Y DOCUMENTOS ---
@@ -254,7 +261,7 @@ def gestionar_perfil(user_id):
             return jsonify(data), 200
 
         if request.method == 'PUT':
-            datos = request.json
+            datos = request.get_json()
             if 'foto_perfil' in datos: usuario.foto_perfil = datos['foto_perfil']
             if 'vehiculo' in datos: usuario.vehiculo = datos['vehiculo']
             if 'placa' in datos: usuario.placa = datos['placa']
@@ -273,6 +280,7 @@ def gestionar_perfil(user_id):
 
     except Exception as e:
         db.session.rollback()
+        print("ERROR EN PERFIL:\n", traceback.format_exc())
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 @app.route('/subir_documento', methods=['POST'])
@@ -294,7 +302,6 @@ def subir_documento():
         file.save(path)
         ruta_publica = f"/uploads/documentos/user_{user_id}/{filename}"
 
-        # Buscar si ya existe el documento para actualizarlo, si no, crearlo.
         doc = DocumentoRepartidor.query.filter_by(user_id=user_id, tipo_documento=tipo).first()
         if doc:
             doc.ruta_archivo_servidor = ruta_publica
@@ -306,6 +313,7 @@ def subir_documento():
         return jsonify({"status": "success", "message": f"{tipo} guardado"}), 200
     except Exception as e:
         db.session.rollback()
+        print("ERROR EN SUBIDA DOCUMENTO:\n", traceback.format_exc())
         return jsonify({"error": str(e)}), 500
 
 # --- PRODUCTOS Y PEDIDOS ---
@@ -319,19 +327,31 @@ def obtener_productos():
             "imagen": p.imagen_url, "comercio": p.comercio.nombre
         } for p in productos]), 200
     except Exception as e:
+        print("ERROR EN OBTENER PRODUCTOS:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/finalizar_pedido', methods=['POST'])
 def finalizar_pedido():
     try:
-        datos = request.json
+        datos = request.get_json()
+        if not datos:
+            return jsonify({"mensaje": "Error: Cuerpo de la solicitud vacío"}), 400
+
         u_id = datos.get('usuario_id') or datos.get('id')
         if not u_id:
             return jsonify({"mensaje": "Error: ID de usuario no identificado"}), 400
+        
+        # Casting forzado a Float para evitar colapso de BDD
+        total_recibido = datos.get('total', 0.0)
+        try:
+            total_float = float(total_recibido)
+        except ValueError:
+            total_float = 0.0
+
         nuevo_pedido = Pedido(
             id_usuario=u_id,
             direccion_entrega=datos.get('direccion_entrega', 'Los Teques, Centro'),
-            total=datos.get('total', 0.0),
+            total=total_float,
             estado='pendiente'
         )
         db.session.add(nuevo_pedido)
@@ -339,6 +359,7 @@ def finalizar_pedido():
         return jsonify({"mensaje": "Pedido recibido", "id": nuevo_pedido.id}), 201
     except Exception as e:
         db.session.rollback()
+        print("ERROR EN FINALIZAR PEDIDO:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/pedidos_disponibles', methods=['GET'])
@@ -348,19 +369,21 @@ def pedidos_disponibles():
         pedidos = Pedido.query.filter(Pedido.estado.in_(['pendiente', 'listo_para_entrega'])).all()
         return jsonify([{
             "id": p.id, 
-            "cliente": p.id_usuario, # Usado por Delivery
-            "direccion": p.direccion_entrega, # Usado por Delivery
+            "cliente": p.id_usuario, 
+            "direccion": p.direccion_entrega, 
             "total": p.total
         } for p in pedidos]), 200
     except Exception as e:
+        print("ERROR EN PEDIDOS DISPONIBLES:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
-@app.route('/aceptar_pedido/<int:pedido_id>', methods=['POST']) # Usado por Express
-@app.route('/aceptar_pedido', methods=['POST']) # Usado por Delivery
+@app.route('/aceptar_pedido/<int:pedido_id>', methods=['POST']) 
+@app.route('/aceptar_pedido', methods=['POST']) 
 def aceptar_pedido(pedido_id=None):
     try:
-        datos = request.json
-        # Maneja ambos formatos de peticion
+        datos = request.get_json()
+        if not datos: return jsonify({"status": "error", "mensaje": "Datos vacíos"}), 400
+
         id_ped = pedido_id if pedido_id else datos.get('pedido_id')
         repartidor_id = datos.get('repartidor_id')
         
@@ -371,12 +394,13 @@ def aceptar_pedido(pedido_id=None):
         pedido = Pedido.query.get(id_ped)
         if pedido and pedido.estado in ['pendiente', 'listo_para_entrega']:
             pedido.repartidor_id = repartidor_id
-            pedido.estado = 'en camino' # o 'aceptado'
+            pedido.estado = 'en camino'
             db.session.commit()
             return jsonify({"status": "success", "mensaje": "Pedido aceptado con éxito", "message": "¡Pedido aceptado!"}), 200
         return jsonify({"status": "error", "mensaje": "Pedido no encontrado o ya no disponible", "error": "Pedido ya no disponible"}), 404
     except Exception as e:
         db.session.rollback()
+        print("ERROR EN ACEPTAR PEDIDO:\n", traceback.format_exc())
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 @app.route('/estado_pedido/<int:id_pedido>', methods=['GET'])
@@ -392,12 +416,15 @@ def estado_pedido(id_pedido):
             }), 200
         return jsonify({"mensaje": "Pedido no encontrado"}), 404
     except Exception as e:
+        print("ERROR EN ESTADO PEDIDO:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/actualizar_ubicacion', methods=['POST'])
 def actualizar_ubicacion_post():
     try:
-        datos = request.json
+        datos = request.get_json()
+        if not datos: return jsonify({"mensaje": "Sin datos"}), 400
+
         pedido = Pedido.query.get(datos.get('id_pedido'))
         if pedido:
             pedido.latitud_actual = datos.get('latitud')
@@ -411,6 +438,7 @@ def actualizar_ubicacion_post():
         return jsonify({"mensaje": "Pedido no encontrado"}), 404
     except Exception as e:
         db.session.rollback()
+        print("ERROR EN ACTUALIZAR UBICACION:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
 # --- HISTORIAL Y ADMINISTRACIÓN ---
@@ -426,6 +454,7 @@ def historial_viajes(repartidor_id):
             "fecha": p.fecha_creacion.strftime("%d/%m/%Y %H:%M")
         } for p in pedidos]), 200
     except Exception as e:
+        print("ERROR EN HISTORIAL:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/admin/api/repartidores', methods=['GET'])
@@ -440,7 +469,7 @@ def api_repartidores():
                 "nombre": r.nombre,
                 "apellido": r.apellido or "",
                 "correo": r.email,
-                "email": r.email, # Agregado por compatibilidad
+                "email": r.email, 
                 "telefono": r.telefono,
                 "saldo": r.saldo,
                 "es_verificado": r.verificado,
@@ -448,6 +477,7 @@ def api_repartidores():
             })
         return jsonify(resultado), 200
     except Exception as e:
+        print("ERROR EN ADMIN REPARTIDORES:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/admin/aprobar/<int:user_id>', methods=['POST', 'GET'])
@@ -461,6 +491,7 @@ def aprobar_repartidor(user_id):
         return jsonify({"status": "error", "mensaje": "Usuario no encontrado o no es repartidor"}), 404
     except Exception as e:
         db.session.rollback()
+        print("ERROR EN APROBAR REPARTIDOR:\n", traceback.format_exc())
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 @app.route('/verificar_estatus/<int:user_id>', methods=['GET'])
@@ -476,6 +507,7 @@ def verificar_estatus(user_id):
             }), 200
         return jsonify({"status": "error", "mensaje": "Usuario no encontrado"}), 404
     except Exception as e:
+        print("ERROR EN VERIFICAR ESTATUS:\n", traceback.format_exc())
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 # --- CHAT ---
@@ -491,12 +523,15 @@ def obtener_mensajes(pedido_id):
             'fecha': m.fecha.strftime('%Y-%m-%d %H:%M:%S')
         } for m in mensajes]), 200
     except Exception as e:
+        print("ERROR EN OBTENER MENSAJES:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/api/chat/enviar', methods=['POST'])
 def enviar_mensaje():
     try:
-        datos = request.json
+        datos = request.get_json()
+        if not datos: return jsonify({"error": "Sin datos"}), 400
+
         pedido_id = datos.get('pedido_id')
         pedido = Pedido.query.get(pedido_id)
         if not pedido: return jsonify({'error': 'Pedido no encontrado'}), 404
@@ -509,6 +544,7 @@ def enviar_mensaje():
         return jsonify({'status': 'success', 'mensaje': 'Enviado correctamente'}), 200
     except Exception as e:
         db.session.rollback()
+        print("ERROR EN ENVIAR MENSAJE:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
 if __name__ == '__main__':
