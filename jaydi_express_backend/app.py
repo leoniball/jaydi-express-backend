@@ -90,7 +90,6 @@ class Pedido(db.Model):
     fecha_creacion = db.Column(db.DateTime, default=datetime.utcnow)
     latitud_actual = db.Column(db.Float, nullable=True)
     longitud_actual = db.Column(db.Float, nullable=True)
-    # 👉 NUEVO: Coordenadas Reales del Cliente para el Mapa
     latitud_destino = db.Column(db.Float, nullable=True)
     longitud_destino = db.Column(db.Float, nullable=True)
 
@@ -102,7 +101,6 @@ class Mensaje(db.Model):
     texto = db.Column(db.Text, nullable=False)
     fecha = db.Column(db.DateTime, default=datetime.utcnow)
 
-# NUEVO MODELO: Para documentos de repartidores (Delivery)
 class DocumentoRepartidor(db.Model):
     __tablename__ = 'documentos_repartidor'
     id = db.Column(db.Integer, primary_key=True)
@@ -153,7 +151,6 @@ def actualizar_bd_perfil():
         except: pass
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_actual FLOAT;'))
         except: pass
-        # 👉 NUEVAS: Protección por si acaso
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN latitud_destino FLOAT;'))
         except: pass
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_destino FLOAT;'))
@@ -342,14 +339,18 @@ def obtener_productos():
 def finalizar_pedido():
     try:
         datos = request.get_json()
-        if not datos:
-            return jsonify({"mensaje": "Error: Cuerpo de la solicitud vacío"}), 400
+        
+        if not datos or isinstance(datos, list):
+            return jsonify({"mensaje": "Error: Cuerpo de la solicitud inválido o vacío"}), 400
 
         u_id = datos.get('usuario_id') or datos.get('id')
         if not u_id:
             return jsonify({"mensaje": "Error: ID de usuario no identificado"}), 400
-        
-        # Casting forzado a Float para evitar colapso de BDD
+            
+        usuario_existe = Usuario.query.get(u_id)
+        if not usuario_existe:
+            return jsonify({"mensaje": "Error: Sesión caducada o usuario inexistente en la BD. Vuelve a iniciar sesión."}), 404
+
         total_recibido = datos.get('total', 0.0)
         try:
             total_float = float(total_recibido)
@@ -360,17 +361,20 @@ def finalizar_pedido():
             id_usuario=u_id,
             direccion_entrega=datos.get('direccion_entrega', 'Los Teques, Centro'),
             total=total_float,
-            estado='pendiente'
+            estado='pendiente',
+            latitud_destino=datos.get('latitud_destino'),
+            longitud_destino=datos.get('longitud_destino')
         )
         db.session.add(nuevo_pedido)
         db.session.commit()
+        
         return jsonify({"mensaje": "Pedido recibido", "id": nuevo_pedido.id}), 201
+        
     except Exception as e:
         db.session.rollback()
         print("ERROR EN FINALIZAR PEDIDO:\n", traceback.format_exc())
-        return jsonify({"mensaje": str(e)}), 500
+        return jsonify({"mensaje": f"Error interno del servidor: {str(e)}"}), 500
 
-# 👉 NUEVO: Endpoint Real para traer las coordenadas del destino al Delivery
 @app.route('/obtener_pedido/<int:pedido_id>', methods=['GET'])
 def obtener_pedido(pedido_id):
     try:
@@ -575,4 +579,3 @@ def enviar_mensaje():
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
-    # --- CHAT ---

@@ -23,11 +23,15 @@ class CarritoScreen extends StatelessWidget {
       return;
     }
 
+    // 👉 AQUI SE PREPARA LA LISTA DE PRODUCTOS (Esto ya funciona perfecto)
     List productosParaEnviar = carritoNotifier.value.map((item) => {
       'nombre': item.nombre,
       'cantidad': item.cantidad,
       'precio': item.precio,
     }).toList();
+
+    // 👉 EXTRACCIÓN DE LA DIRECCIÓN REAL DEL CLIENTE
+    String direccionReal = prefs.getString('direccion') ?? prefs.getString('direccion_usuario') ?? "Dirección no registrada, coordinar en el chat";
 
     if (!context.mounted) return;
     
@@ -40,7 +44,7 @@ class CarritoScreen extends StatelessWidget {
     try {
       bool exitoServidor = await ApiService.finalizarCompra(
         usuarioId: usuarioId,
-        direccion: "Urbanización Simón Bolívar, Bloque 1", 
+        direccion: direccionReal, // 👉 SIMULACIÓN ELIMINADA, AHORA USA LA VARIABLE REAL
         total: totalFinal,
         productos: productosParaEnviar,
       );

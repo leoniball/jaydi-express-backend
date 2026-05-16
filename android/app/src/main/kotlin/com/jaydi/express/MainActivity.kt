@@ -1,4 +1,4 @@
-package com.example.prueba_jaydi
+package com.jaydi.express
 
 import io.flutter.embedding.android.FlutterActivity
 
