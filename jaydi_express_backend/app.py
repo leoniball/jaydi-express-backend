@@ -340,40 +340,64 @@ def finalizar_pedido():
     try:
         datos = request.get_json()
         
+        # 1. IMPRIMIR LO QUE MANDA EL TELÉFONO (Para depuración)
+        print(">>> PAYLOAD RECIBIDO DE FLUTTER:", datos, flush=True)
+        
         if not datos or isinstance(datos, list):
-            return jsonify({"mensaje": "Error: Cuerpo de la solicitud inválido o vacío"}), 400
+            return jsonify({"mensaje": "Error: Cuerpo de la solicitud inválido"}), 400
 
-        u_id = datos.get('usuario_id') or datos.get('id')
-        if not u_id:
+        # 2. BLINDAJE DEL ID DE USUARIO (Forzar a número entero)
+        raw_uid = datos.get('usuario_id') or datos.get('id_usuario') or datos.get('id')
+        if not raw_uid:
             return jsonify({"mensaje": "Error: ID de usuario no identificado"}), 400
             
+        try:
+            u_id = int(raw_uid)
+        except ValueError:
+            return jsonify({"mensaje": "Error: Formato de ID inválido"}), 400
+
         usuario_existe = Usuario.query.get(u_id)
         if not usuario_existe:
-            return jsonify({"mensaje": "Error: Sesión caducada o usuario inexistente en la BD. Vuelve a iniciar sesión."}), 404
+            return jsonify({"mensaje": "Error: Sesión caducada o usuario no existe."}), 404
 
-        total_recibido = datos.get('total', 0.0)
+        # 3. BLINDAJE DEL TOTAL (Forzar a decimal)
         try:
-            total_float = float(total_recibido)
-        except ValueError:
+            total_float = float(datos.get('total', 0.0))
+        except (ValueError, TypeError):
             total_float = 0.0
 
+        # 4. BLINDAJE DE COORDENADAS (La cura para el Error 500)
+        def sanear_coordenada(valor):
+            try:
+                # Si el valor no está vacío, lo convierte a Float. Si está vacío, devuelve None.
+                return float(valor) if str(valor).strip() != "" else None
+            except (ValueError, TypeError):
+                return None
+
+        lat_dest = sanear_coordenada(datos.get('latitud_destino'))
+        lon_dest = sanear_coordenada(datos.get('longitud_destino'))
+
+        # 5. CREACIÓN DEL PEDIDO
         nuevo_pedido = Pedido(
             id_usuario=u_id,
-            direccion_entrega=datos.get('direccion_entrega', 'Los Teques, Centro'),
+            direccion_entrega=str(datos.get('direccion_entrega', 'Los Teques, Centro')),
             total=total_float,
             estado='pendiente',
-            latitud_destino=datos.get('latitud_destino'),
-            longitud_destino=datos.get('longitud_destino')
+            latitud_destino=lat_dest,
+            longitud_destino=lon_dest
         )
         db.session.add(nuevo_pedido)
         db.session.commit()
         
+        print(f">>> PEDIDO EXITOSO GUARDADO. ID: {nuevo_pedido.id}", flush=True)
         return jsonify({"mensaje": "Pedido recibido", "id": nuevo_pedido.id}), 201
         
     except Exception as e:
         db.session.rollback()
-        print("ERROR EN FINALIZAR PEDIDO:\n", traceback.format_exc())
-        return jsonify({"mensaje": f"Error interno del servidor: {str(e)}"}), 500
+        # IMPRIMIR ERROR REAL FORZADO EN CONSOLA
+        print(">>> ERROR CRÍTICO EN FINALIZAR PEDIDO:", flush=True)
+        print(traceback.format_exc(), flush=True)
+        return jsonify({"mensaje": f"Error interno: {str(e)}"}), 500
 
 @app.route('/obtener_pedido/<int:pedido_id>', methods=['GET'])
 def obtener_pedido(pedido_id):
