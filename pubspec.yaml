@@ -1,0 +1,62 @@
+name: prueba_jaydi
+description: "Jaydi Express - Amazon Style App"
+publish_to: 'none'
+
+version: 1.0.0+1
+
+environment:
+  sdk: '>=3.0.0 <4.0.0'
+
+dependencies:
+  flutter:
+    sdk: flutter
+  cupertino_icons: ^1.0.8
+  
+  # --- PERSISTENCIA Y DATOS ---
+  shared_preferences: ^2.2.0
+  sqflite: ^2.3.0
+  path: ^1.9.0
+  
+  # --- COMUNICACIÓN CON APIS ---
+  http: ^1.1.0
+  socket_io_client: ^2.0.3
+
+  # --- LIBRERÍAS PARA EL MAPA (ESTÁNDAR MODERNO) ---
+  flutter_map: ^6.1.0
+  latlong2: ^0.9.1
+  geolocator: ^10.1.0 
+
+  # --- NOTIFICACIONES ---
+  flutter_local_notifications: ^17.0.0
+
+dev_dependencies:
+  flutter_test:
+    sdk: flutter
+  flutter_lints: ^3.0.0
+  flutter_launcher_icons: ^0.11.0
+  change_app_package_name: ^1.1.2
+
+flutter:
+  uses-material-design: true
+
+  assets:
+    - assets/images/
+    - assets/images/jaydi_logo.jpg
+    - assets/images/icono_app.png
+    - assets/images/gps.png 
+    - assets/images/venezuela_silueta.png 
+
+  fonts:
+    - family: Montserrat
+      fonts:
+        - asset: assets/fonts/Montserrat-VariableFont_wght.ttf
+
+# Configuración del Icono de la App (Corregido a la sintaxis 0.11.0)
+flutter_icons:
+  android: "launcher_icon"
+  ios: true
+  image_path: "assets/images/icono_app.png"
+  min_sdk_android: 21
+  remove_alpha_ios: true
+  adaptive_icon_background: "#FFFFFF" 
+  adaptive_icon_foreground: "assets/images/icono_app.png"
