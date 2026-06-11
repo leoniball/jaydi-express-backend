@@ -92,6 +92,7 @@ class Pedido(db.Model):
     longitud_actual = db.Column(db.Float, nullable=True)
     latitud_destino = db.Column(db.Float, nullable=True)
     longitud_destino = db.Column(db.Float, nullable=True)
+    datos_pago = db.Column(db.JSON, nullable=True) # 👉 INTEGRACIÓN DE DATOS DE PAGO
 
 class Mensaje(db.Model):
     __tablename__ = 'mensajes'
@@ -154,6 +155,9 @@ def actualizar_bd_perfil():
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN latitud_destino FLOAT;'))
         except: pass
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_destino FLOAT;'))
+        except: pass
+        # 👉 MIGRACIÓN PARA EL NUEVO CAMPO DE PAGO
+        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN datos_pago JSON;'))
         except: pass
         db.session.commit()
         return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada."}), 200
@@ -366,6 +370,9 @@ def finalizar_pedido():
         except (ValueError, TypeError):
             total_float = 0.0
 
+        # 👉 NUEVA CAPTURA DEL OBJETO DE PAGO
+        datos_pago = datos.get('pago')
+
         # 4. BLINDAJE DE COORDENADAS (La cura para el Error 500)
         def sanear_coordenada(valor):
             try:
@@ -384,12 +391,13 @@ def finalizar_pedido():
             total=total_float,
             estado='pendiente',
             latitud_destino=lat_dest,
-            longitud_destino=lon_dest
+            longitud_destino=lon_dest,
+            datos_pago=datos_pago # 👉 GUARDADO DEL COMPROBANTE
         )
         db.session.add(nuevo_pedido)
         db.session.commit()
         
-        print(f">>> PEDIDO EXITOSO GUARDADO. ID: {nuevo_pedido.id}", flush=True)
+        print(f">>> PEDIDO EXITOSO GUARDADO. ID: {nuevo_pedido.id}. DATOS PAGO: {datos_pago}", flush=True)
         return jsonify({"mensaje": "Pedido recibido", "id": nuevo_pedido.id}), 201
         
     except Exception as e:
