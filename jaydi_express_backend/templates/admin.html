@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jaydi Express | Panel Admin & Financiero</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
+    
+    <style>
+        .navbar { background-color: #FF5722; }
+        .btn-approve { background-color: #4CAF50; color: white; border: none; }
+        .btn-approve:hover { background-color: #45a049; color: white; }
+        .btn-liberar { background-color: #1565C0; color: white; border: none; }
+        .btn-liberar:hover { background-color: #0d47a1; color: white; }
+        .table-container { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .doc-link { margin-bottom: 4px; font-size: 0.8rem; }
+        .badge-verificado { background-color: #4CAF50; padding: 8px 12px; border-radius: 5px; color: white; }
+    </style>
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-dark shadow-sm mb-4">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="#">
+                <i class="bi bi-shield-lock-fill me-2"></i>JAYDI EXPRESS - ADMIN PANEL
+            </a>
+            <span class="navbar-text text-white small d-none d-md-inline">Control Operativo y Conciliación Financiera</span>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row mb-4 text-center">
+            <div class="col-md-4 mb-3">
+                <div class="card border-0 shadow-sm py-3">
+                    <h6 class="text-muted">Total Repartidores</h6>
+                    <h2 id="count-total" class="fw-bold text-dark">0</h2>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card border-0 shadow-sm py-3 border-start border-warning border-5">
+                    <h6 class="text-muted">Documentos Pendientes</h6>
+                    <h2 id="count-pendientes" class="fw-bold text-warning">0</h2>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card border-0 shadow-sm py-3 border-start border-success border-5">
+                    <h6 class="text-muted">Saldo Total Red</h6>
+                    <h2 id="total-saldo" class="fw-bold text-success">$0.00</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-container shadow-sm mb-5 border-start border-primary border-5">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="m-0 fw-bold text-primary"><i class="bi bi-bank2 me-2"></i>Conciliación de Pagos (Por Verificar)</h4>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 10%">Pedido</th>
+                            <th style="width: 15%">Monto Original</th>
+                            <th style="width: 15%">Tasa BCV</th>
+                            <th style="width: 20%">Equivalente (VES)</th>
+                            <th style="width: 25%">Datos Reportados</th>
+                            <th style="width: 15%" class="text-center">Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-pagos">
+                        <tr><td colspan="6" class="text-center py-4 text-muted">Cargando pagos en espera...</td></tr>
+                    </tbody>
+                </table>
+            </div>
+        </div>
+
+        <div class="table-container shadow-sm">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="m-0 fw-bold text-secondary"><i class="bi bi-people-fill me-2"></i>Listado Maestro de Repartidores</h4>
+                <button class="btn btn-outline-primary btn-sm" onclick="actualizarTodo()">
+                    <i class="bi bi-arrow-clockwise"></i> Actualizar en Vivo
+                </button>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 5%">ID</th>
+                            <th style="width: 20%">Repartidor</th>
+                            <th style="width: 10%">Saldo</th>
+                            <th style="width: 15%">Última Conexión</th>
+                            <th style="width: 35%">Documentos de Identidad</th>
+                            <th style="width: 15%" class="text-center">Estado / Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-repartidores">
+                    </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const SERVER_URL = 'https://jaydi-delivery-serverv.onrender.com';
+        let cantidadPagosPrevios = -1; // Para rastrear nuevos pagos y lanzar notificaciones
+
+        // 1. CARGA DE PAGOS PENDIENTES
+        function cargarPagos() {
+            fetch(`${SERVER_URL}/admin/api/pagos_pendientes`)
+                .then(res => res.json())
+                .then(data => {
+                    // Lógica de Notificación de Nuevo Pago
+                    if (cantidadPagosPrevios !== -1 && data.length > cantidadPagosPrevios) {
+                        Swal.fire({
+                            toast: true, position: 'top-end', icon: 'info',
+                            title: '¡Nuevo pago reportado!', text: 'Revisa la tabla de conciliación.',
+                            showConfirmButton: false, timer: 4000
+                        });
+                    }
+                    cantidadPagosPrevios = data.length;
+
+                    const tbody = document.getElementById('tabla-pagos');
+                    let rows = '';
+
+                    if (!data || data.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted"><i class="bi bi-check-circle fs-3 d-block mb-2 text-success"></i>No hay pagos pendientes por verificar.</td></tr>';
+                        return;
+                    }
+
+                    data.forEach(p => {
+                        // Procesamiento seguro del JSON
+                        let datosPago = p.datos_pago;
+                        if (typeof datosPago === 'string') {
+                            try { datosPago = JSON.parse(datosPago); } catch(e) { datosPago = {}; }
+                        }
+                        
+                        const tasa = datosPago.tasa_bcv || 0;
+                        const montoUSD = parseFloat(p.total || 0).toFixed(2);
+                        const montoVES = (montoUSD * tasa).toFixed(2);
+                        const metodo = datosPago.metodo || 'No especificado';
+                        const ref = datosPago.referencia || 'N/A';
+
+                        rows += `
+                            <tr>
+                                <td><span class="fw-bold fs-5">#${p.id}</span></td>
+                                <td><span class="text-success fw-bold fs-5">$${montoUSD}</span></td>
+                                <td><span class="text-muted small">Bs. ${tasa}</span></td>
+                                <td><span class="fw-bold text-primary fs-5">Bs. ${montoVES}</span></td>
+                                <td>
+                                    <div class="fw-bold text-dark"><i class="bi bi-receipt"></i> ${metodo}</div>
+                                    <div class="text-secondary small">Ref: <span class="fw-bold text-dark">${ref}</span></div>
+                                </td>
+                                <td class="text-center">
+                                    <button class="btn btn-liberar btn-sm px-3 fw-bold shadow-sm" onclick="aprobarPago(${p.id})">
+                                        <i class="bi bi-check2-circle"></i> LIBERAR ORDEN
+                                    </button>
+                                </td>
+                            </tr>
+                        `;
+                    });
+                    tbody.innerHTML = rows;
+                })
+                .catch(err => console.error("Error cargando pagos:", err));
+        }
+
+        // 2. FUNCIÓN PARA APROBAR EL PAGO (LIBERAR ORDEN)
+        function aprobarPago(id) {
+            Swal.fire({
+                title: '¿Confirmar Liquidación?',
+                text: "Asegúrate de haber verificado la referencia en tu banco. Esta acción enviará la orden a los domiciliarios.",
+                icon: 'warning',
+                showCancelButton: true,
+                confirmButtonColor: '#1565C0',
+                cancelButtonColor: '#d33',
+                confirmButtonText: 'Sí, liberar orden',
+                cancelButtonText: 'Cancelar'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    fetch(`${SERVER_URL}/admin/aprobar_pago/${id}`, { method: 'GET' })
+                        .then(res => res.json())
+                        .then(data => {
+                            Swal.fire('¡Aprobado!', 'La orden ya está disponible para la flota.', 'success');
+                            cargarPagos(); // Recarga la tabla
+                        })
+                        .catch(err => Swal.fire('Error', 'Hubo un problema de conexión con el servidor.', 'error'));
+                }
+            });
+        }
+
+        // 3. CARGA DE REPARTIDORES ORIGINAL (Optimizada con SweetAlert)
+        function cargarRepartidores() {
+            fetch(`${SERVER_URL}/admin/api/repartidores`)
+                .then(res => res.json())
+                .then(data => {
+                    const tbody = document.getElementById('tabla-repartidores');
+                    let rows = '';
+                    let pendientes = 0;
+                    let saldoTotal = 0;
+
+                    if (!data || data.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted">No hay repartidores registrados.</td></tr>';
+                        return;
+                    }
+                    
+                    data.forEach(user => {
+                        if(!user.es_verificado) pendientes++;
+                        saldoTotal += parseFloat(user.saldo || 0);
+
+                        const fecha = user.ultima_conexion ? new Date(user.ultima_conexion).toLocaleString() : '---';
+                        const baseUrl = `${SERVER_URL}/uploads/documentos/user_${user.id}`;
+
+                        rows += `
+                            <tr>
+                                <td><span class="text-muted small">#${user.id}</span></td>
+                                <td>
+                                    <div class="fw-bold">${user.nombre}</div>
+                                    <div class="text-muted" style="font-size: 0.8rem;">${user.email}</div> 
+                                </td>
+                                <td><span class="text-success fw-bold">$${parseFloat(user.saldo || 0).toFixed(2)}</span></td>
+                                <td class="text-muted" style="font-size: 0.85rem;">${fecha}</td>
+                                <td>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        <a href="${baseUrl}/cedula_frontal.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-person-badge"></i> Cédula</a>
+                                        <a href="${baseUrl}/selfie_cedula.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-camera"></i> Selfie</a>
+                                        <a href="${baseUrl}/licencia.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-card-heading"></i> Licencia</a>
+                                        <a href="${baseUrl}/certificado_medico.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-heart-pulse"></i> Médico</a>
+                                        <a href="${baseUrl}/titulo_circulacion.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-file-earmark-text"></i> Título</a>
+                                        <a href="${baseUrl}/seguro_rcv.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-shield-check"></i> RCV</a>
+                                    </div>
+                                </td>
+                                <td class="text-center">
+                                    ${user.es_verificado 
+                                        ? '<span class="badge badge-verificado"><i class="bi bi-check-circle-fill"></i> Verificado</span>' 
+                                        : `<button class="btn btn-approve btn-sm px-3 fw-bold shadow-sm" onclick="aprobar(${user.id})">APROBAR</button>`
+                                    }
+                                </td>
+                            </tr>`;
+                    });
+
+                    tbody.innerHTML = rows;
+                    document.getElementById('count-total').innerText = data.length;
+                    document.getElementById('count-pendientes').innerText = pendientes;
+                    document.getElementById('total-saldo').innerText = `$${saldoTotal.toFixed(2)}`;
+                })
+                .catch(err => {
+                    console.error("Error cargando repartidores:", err);
+                    document.getElementById('tabla-repartidores').innerHTML = '<tr><td colspan="6" class="text-center py-5 text-danger">Error conectando con el servidor.</td></tr>';
+                });
+        }
+
+        // 4. FUNCIÓN APROBAR REPARTIDOR ORIGINAL (Optimizada con SweetAlert)
+        function aprobar(id) {
+            Swal.fire({
+                title: `¿Aprobar Repartidor #${id}?`,
+                text: "¿Has verificado la legitimidad de todos sus documentos?",
+                icon: 'question',
+                showCancelButton: true,
+                confirmButtonColor: '#4CAF50',
+                cancelButtonColor: '#d33',
+                confirmButtonText: 'Sí, aprobar',
+                cancelButtonText: 'Cancelar'
+            }).then((result) => {
+                if (result.isConfirmed) {
+                    fetch(`${SERVER_URL}/admin/aprobar/${id}`, { method: 'POST' })
+                        .then(res => {
+                            if(res.ok) {
+                                Swal.fire('¡Activado!', 'El repartidor ya puede recibir pedidos.', 'success');
+                                cargarRepartidores();
+                            } else {
+                                Swal.fire('Error', 'No se pudo aprobar en el servidor.', 'error');
+                            }
+                        })
+                        .catch(err => Swal.fire('Error', 'Fallo de conexión.', 'error'));
+                }
+            });
+        }
+
+        // Función integradora
+        function actualizarTodo() {
+            cargarPagos();
+            cargarRepartidores();
+        }
+
+        // Ejecución inicial y bucle cada 8 segundos para evitar saturar el servidor
+        actualizarTodo();
+        setInterval(actualizarTodo, 8000); 
+    </script>
+</body>
+</html>
