@@ -129,7 +129,7 @@ def ver_archivo(user_id, filename):
 
 @app.route('/admin')
 def admin_page():
-    return render_template('admin_panel.html')
+    return render_template('admin.html') # 👉 ASEGURATE QUE ESTO APUNTE A TU ARCHIVO HTML ACTUALIZADO
 
 @app.route('/actualizar_bd_perfil')
 def actualizar_bd_perfil():
@@ -370,7 +370,7 @@ def finalizar_pedido():
         except (ValueError, TypeError):
             total_float = 0.0
 
-        # 👉 NUEVA CAPTURA DEL OBJETO DE PAGO
+        # CAPTURA DEL OBJETO DE PAGO
         datos_pago = datos.get('pago')
 
         # 4. BLINDAJE DE COORDENADAS (La cura para el Error 500)
@@ -384,15 +384,15 @@ def finalizar_pedido():
         lat_dest = sanear_coordenada(datos.get('latitud_destino'))
         lon_dest = sanear_coordenada(datos.get('longitud_destino'))
 
-        # 5. CREACIÓN DEL PEDIDO
+        # 5. CREACIÓN DEL PEDIDO (MODIFICADO PARA SEGURIDAD: Nace como 'verificando_pago')
         nuevo_pedido = Pedido(
             id_usuario=u_id,
             direccion_entrega=str(datos.get('direccion_entrega', 'Los Teques, Centro')),
             total=total_float,
-            estado='pendiente',
+            estado='verificando_pago',  # 👉 EL CAMBIO CRUCIAL PARA LA SEGURIDAD
             latitud_destino=lat_dest,
             longitud_destino=lon_dest,
-            datos_pago=datos_pago # 👉 GUARDADO DEL COMPROBANTE
+            datos_pago=datos_pago 
         )
         db.session.add(nuevo_pedido)
         db.session.commit()
@@ -427,6 +427,7 @@ def obtener_pedido(pedido_id):
 @app.route('/api/delivery/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
     try:
+        # Aquí el domiciliario SOLO verá pedidos que ya estén en 'pendiente' o 'listo_para_entrega'
         pedidos = Pedido.query.filter(Pedido.estado.in_(['pendiente', 'listo_para_entrega'])).all()
         return jsonify([{
             "id": p.id, 
@@ -504,6 +505,43 @@ def actualizar_ubicacion_post():
 
 # --- HISTORIAL Y ADMINISTRACIÓN ---
 
+# 👉 RUTAS NUEVAS PARA LA CONCILIACIÓN DE PAGOS (PANEL WEB)
+@app.route('/admin/api/pagos_pendientes', methods=['GET'])
+def get_pagos_pendientes():
+    try:
+        pedidos = Pedido.query.filter_by(estado='verificando_pago').all()
+        lista = []
+        for p in pedidos:
+            lista.append({
+                "id": p.id,
+                "total": float(p.total),
+                "datos_pago": p.datos_pago
+            })
+        return jsonify(lista), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/admin/aprobar_pago/<int:pedido_id>', methods=['GET'])
+def admin_aprobar_pago(pedido_id):
+    try:
+        pedido = Pedido.query.get(pedido_id)
+        if not pedido:
+            return jsonify({"error": "Pedido no encontrado"}), 404
+            
+        if pedido.estado == 'verificando_pago':
+            pedido.estado = 'pendiente' # 👉 AQUÍ SE LIBERA PARA EL DOMICILIARIO
+            db.session.commit()
+            return jsonify({
+                "status": "success", 
+                "mensaje": f"Pago del pedido {pedido_id} verificado. Orden enviada a los domiciliarios."
+            }), 200
+        else:
+            return jsonify({"aviso": f"El pedido ya tiene estado: {pedido.estado}"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+# RUTAS ADMINISTRATIVAS ORIGINALES
 @app.route('/historial_viajes/<int:repartidor_id>', methods=['GET'])
 def historial_viajes(repartidor_id):
     try:
