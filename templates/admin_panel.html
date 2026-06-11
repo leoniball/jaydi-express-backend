@@ -1,0 +1,165 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Jaydi Express | Panel Admin</title>
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
+    <style>
+        .navbar { background-color: #FF5722; }
+        .btn-approve { background-color: #4CAF50; color: white; border: none; }
+        .btn-approve:hover { background-color: #45a049; color: white; }
+        .table-container { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+        .doc-link { margin-bottom: 4px; font-size: 0.8rem; }
+        .badge-verificado { background-color: #4CAF50; padding: 8px 12px; border-radius: 5px; color: white; }
+    </style>
+</head>
+<body class="bg-light">
+
+    <nav class="navbar navbar-dark shadow-sm mb-4">
+        <div class="container">
+            <a class="navbar-brand fw-bold" href="#">
+                <i class="bi bi-shield-lock-fill me-2"></i>JAYDI EXPRESS - ADMIN PANEL
+            </a>
+            <span class="navbar-text text-white small d-none d-md-inline">Control Real y Verificación de Documentos</span>
+        </div>
+    </nav>
+
+    <div class="container">
+        <div class="row mb-4 text-center">
+            <div class="col-md-4 mb-3">
+                <div class="card border-0 shadow-sm py-3">
+                    <h6 class="text-muted">Total Repartidores</h6>
+                    <h2 id="count-total" class="fw-bold text-dark">0</h2>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card border-0 shadow-sm py-3 border-start border-warning border-5">
+                    <h6 class="text-muted">Pendientes</h6>
+                    <h2 id="count-pendientes" class="fw-bold text-warning">0</h2>
+                </div>
+            </div>
+            <div class="col-md-4 mb-3">
+                <div class="card border-0 shadow-sm py-3 border-start border-success border-5">
+                    <h6 class="text-muted">Saldo Total Red</h6>
+                    <h2 id="total-saldo" class="fw-bold text-success">$0.00</h2>
+                </div>
+            </div>
+        </div>
+
+        <div class="table-container shadow-sm">
+            <div class="d-flex justify-content-between align-items-center mb-4">
+                <h4 class="m-0 fw-bold text-secondary">Listado Maestro</h4>
+                <button class="btn btn-outline-primary btn-sm" onclick="cargarRepartidores()">
+                    <i class="bi bi-arrow-clockwise"></i> Actualizar en Vivo
+                </button>
+            </div>
+
+            <div class="table-responsive">
+                <table class="table table-hover align-middle">
+                    <thead class="table-light">
+                        <tr>
+                            <th style="width: 5%">ID</th>
+                            <th style="width: 20%">Repartidor</th>
+                            <th style="width: 10%">Saldo</th>
+                            <th style="width: 15%">Última Conexión</th>
+                            <th style="width: 35%">Documentos de Identidad</th>
+                            <th style="width: 15%" class="text-center">Estado / Acción</th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabla-repartidores">
+                        </tbody>
+                </table>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        // CENTRALIZAMOS TU URL DE RENDER AQUÍ PARA TODO EL PANEL ADMIN
+        const SERVER_URL = 'https://jaydi-delivery-serverv.onrender.com';
+
+        function cargarRepartidores() {
+            // CAMBIO: Apuntando a la API de Render
+            fetch(`${SERVER_URL}/admin/api/repartidores`)
+                .then(res => res.json())
+                .then(data => {
+                    const tbody = document.getElementById('tabla-repartidores');
+                    let rows = '';
+                    let pendientes = 0;
+                    let saldoTotal = 0;
+
+                    if (!data || data.length === 0) {
+                        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted">No hay repartidores registrados.</td></tr>';
+                        return;
+                    }
+                    
+                    data.forEach(user => {
+                        if(!user.es_verificado) pendientes++;
+                        saldoTotal += parseFloat(user.saldo || 0);
+
+                        const fecha = user.ultima_conexion ? new Date(user.ultima_conexion).toLocaleString() : '---';
+                        
+                        // CAMBIO: Asegurando que las imágenes se carguen desde el servidor en la nube
+                        const baseUrl = `${SERVER_URL}/uploads/documentos/user_${user.id}`;
+
+                        rows += `
+                            <tr>
+                                <td><span class="text-muted small">#${user.id}</span></td>
+                                <td>
+                                    <div class="fw-bold">${user.nombre}</div>
+                                    <div class="text-muted" style="font-size: 0.8rem;">${user.correo}</div>
+                                </td>
+                                <td><span class="text-success fw-bold">$${parseFloat(user.saldo || 0).toFixed(2)}</span></td>
+                                <td class="text-muted" style="font-size: 0.85rem;">${fecha}</td>
+                                <td>
+                                    <div class="d-flex flex-wrap gap-1">
+                                        <a href="${baseUrl}/cedula_frontal.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-person-badge"></i> Cédula</a>
+                                        <a href="${baseUrl}/selfie_cedula.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-camera"></i> Selfie</a>
+                                        <a href="${baseUrl}/licencia.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-card-heading"></i> Licencia</a>
+                                        <a href="${baseUrl}/certificado_medico.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-heart-pulse"></i> Médico</a>
+                                        <a href="${baseUrl}/titulo_circulacion.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-file-earmark-text"></i> Título</a>
+                                        <a href="${baseUrl}/seguro_rcv.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-shield-check"></i> RCV</a>
+                                    </div>
+                                </td>
+                                <td class="text-center">
+                                    ${user.es_verificado 
+                                        ? '<span class="badge badge-verificado"><i class="bi bi-check-circle-fill"></i> Verificado</span>' 
+                                        : `<button class="btn btn-approve btn-sm px-3 fw-bold" onclick="aprobar(${user.id})">APROBAR</button>`
+                                    }
+                                </td>
+                            </tr>`;
+                    });
+
+                    tbody.innerHTML = rows;
+                    document.getElementById('count-total').innerText = data.length;
+                    document.getElementById('count-pendientes').innerText = pendientes;
+                    document.getElementById('total-saldo').innerText = `$${saldoTotal.toFixed(2)}`;
+                })
+                .catch(err => {
+                    console.error("Error cargando repartidores:", err);
+                    document.getElementById('tabla-repartidores').innerHTML = '<tr><td colspan="6" class="text-center py-5 text-danger">Error conectando con el servidor.</td></tr>';
+                });
+        }
+
+        function aprobar(id) {
+            if(confirm('¿Has verificado todos los documentos del repartidor #' + id + '?')) {
+                // CAMBIO: Apuntando a la API de Render para aprobar
+                fetch(`${SERVER_URL}/admin/aprobar/${id}`, { method: 'POST' })
+                    .then(res => {
+                        if(res.ok) {
+                            alert('¡Repartidor activado en el sistema!');
+                            cargarRepartidores();
+                        } else {
+                            alert('Error al aprobar en el servidor.');
+                        }
+                    })
+                    .catch(err => alert('Error al conectar con el servidor en la nube.'));
+            }
+        }
+
+        cargarRepartidores();
+        setInterval(cargarRepartidores, 10000); // Actualización automática cada 10 segundos
+    </script>
+</body>
+</html>
