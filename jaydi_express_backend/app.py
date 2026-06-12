@@ -260,6 +260,7 @@ def login():
             
         email = datos.get('email', '').strip().lower()
         usuario = Usuario.query.filter_by(email=email).first()
+        print(f"DEBUG: Intentando loguear correo: {email} con pass: {datos.get('password')}", flush=True)
         
         if usuario and check_password_hash(usuario.password, datos.get('password')):
             usuario.ultima_conexion = datetime.utcnow()
