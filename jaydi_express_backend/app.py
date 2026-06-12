@@ -512,10 +512,13 @@ def get_pagos_pendientes():
         pedidos = Pedido.query.filter_by(estado='verificando_pago').all()
         lista = []
         for p in pedidos:
+            # 👉 BLINDAJE: Si datos_pago está vacío (null), inventamos uno temporal para no romper la web
+            pago_seguro = p.datos_pago if p.datos_pago else {"metodo": "No reportado", "referencia": "N/A", "tasa_bcv": 0}
+            
             lista.append({
                 "id": p.id,
                 "total": float(p.total),
-                "datos_pago": p.datos_pago
+                "datos_pago": pago_seguro
             })
         return jsonify(lista), 200
     except Exception as e:
