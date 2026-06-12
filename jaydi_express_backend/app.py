@@ -1,10 +1,14 @@
 import os
 import traceback
+import smtplib
+import random
+from email.mime.text import MIMEText
+from email.mime.multipart import MIMEMultipart
 from flask import Flask, jsonify, request, render_template, send_from_directory
 from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
-from datetime import datetime
+from datetime import datetime, timedelta
 from sqlalchemy import text 
 
 # --- IMPORTAR Y CARGAR VARIABLES DE ENTORNO OCULTAS ---
@@ -58,7 +62,7 @@ class Usuario(db.Model):
     viajes_completados = db.Column(db.Integer, default=0)
     latitud = db.Column(db.Float, nullable=True)
     longitud = db.Column(db.Float, nullable=True)
-    ultima_conexion = db.Column(db.DateTime, default=datetime.utcnow) # Añadido para Delivery
+    ultima_conexion = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Comercio(db.Model):
     __tablename__ = 'comercio'
@@ -92,7 +96,7 @@ class Pedido(db.Model):
     longitud_actual = db.Column(db.Float, nullable=True)
     latitud_destino = db.Column(db.Float, nullable=True)
     longitud_destino = db.Column(db.Float, nullable=True)
-    datos_pago = db.Column(db.JSON, nullable=True) # 👉 INTEGRACIÓN DE DATOS DE PAGO
+    datos_pago = db.Column(db.JSON, nullable=True) 
 
 class Mensaje(db.Model):
     __tablename__ = 'mensajes'
@@ -109,9 +113,51 @@ class DocumentoRepartidor(db.Model):
     tipo_documento = db.Column(db.String(50), nullable=False)
     ruta_archivo_servidor = db.Column(db.String(255), nullable=False)
 
+# --- TABLA TEMPORAL PARA CÓDIGOS OTP ---
+class CodigoOTP(db.Model):
+    __tablename__ = 'codigos_otp'
+    id = db.Column(db.Integer, primary_key=True)
+    email = db.Column(db.String(120), nullable=False)
+    codigo = db.Column(db.String(6), nullable=False)
+    proposito = db.Column(db.String(50), nullable=False) # 'registro' o 'recuperacion'
+    fecha_expiracion = db.Column(db.DateTime, nullable=False)
+
 with app.app_context():
     db.create_all()
     print("¡Base de Datos de Neon Sincronizada y Lista (Unificada)!")
+
+# --- MOTOR DE ENVÍO DE CORREOS (GMAIL) ---
+def enviar_correo_otp(destinatario, codigo, proposito):
+    remitente = os.environ.get('SMTP_USER')
+    password = os.environ.get('SMTP_PASSWORD')
+
+    if not remitente or not password:
+        print("❌ ERROR: Credenciales SMTP no configuradas en Render.")
+        return False
+
+    if proposito == 'registro':
+        asunto = "Tu código de verificación - Jaydi Express"
+        cuerpo = f"Bienvenido a Jaydi Express.\n\nTu código de verificación es: {codigo}\n\nEste código expira en 10 minutos."
+    else:
+        asunto = "Recuperación de contraseña - Jaydi Express"
+        cuerpo = f"Has solicitado recuperar tu contraseña.\n\nTu código de seguridad es: {codigo}\n\nSi no fuiste tú, ignora este mensaje."
+
+    msg = MIMEMultipart()
+    msg['From'] = remitente
+    msg['To'] = destinatario
+    msg['Subject'] = asunto
+    msg.attach(MIMEText(cuerpo, 'plain'))
+
+    try:
+        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server.starttls()
+        server.login(remitente, password)
+        server.send_message(msg)
+        server.quit()
+        return True
+    except Exception as e:
+        print(f"❌ Error al enviar correo SMTP: {e}")
+        return False
 
 # --- RUTAS DE NAVEGACIÓN Y ARCHIVOS ---
 
@@ -129,7 +175,7 @@ def ver_archivo(user_id, filename):
 
 @app.route('/admin')
 def admin_page():
-    return render_template('admin.html') # 👉 ASEGURATE QUE ESTO APUNTE A TU ARCHIVO HTML ACTUALIZADO
+    return render_template('admin.html') 
 
 @app.route('/actualizar_bd_perfil')
 def actualizar_bd_perfil():
@@ -156,7 +202,6 @@ def actualizar_bd_perfil():
         except: pass
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_destino FLOAT;'))
         except: pass
-        # 👉 MIGRACIÓN PARA EL NUEVO CAMPO DE PAGO
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN datos_pago JSON;'))
         except: pass
         db.session.commit()
@@ -343,14 +388,11 @@ def obtener_productos():
 def finalizar_pedido():
     try:
         datos = request.get_json()
-        
-        # 1. IMPRIMIR LO QUE MANDA EL TELÉFONO (Para depuración)
         print(">>> PAYLOAD RECIBIDO DE FLUTTER:", datos, flush=True)
         
         if not datos or isinstance(datos, list):
             return jsonify({"mensaje": "Error: Cuerpo de la solicitud inválido"}), 400
 
-        # 2. BLINDAJE DEL ID DE USUARIO (Forzar a número entero)
         raw_uid = datos.get('usuario_id') or datos.get('id_usuario') or datos.get('id')
         if not raw_uid:
             return jsonify({"mensaje": "Error: ID de usuario no identificado"}), 400
@@ -364,19 +406,15 @@ def finalizar_pedido():
         if not usuario_existe:
             return jsonify({"mensaje": "Error: Sesión caducada o usuario no existe."}), 404
 
-        # 3. BLINDAJE DEL TOTAL (Forzar a decimal)
         try:
             total_float = float(datos.get('total', 0.0))
         except (ValueError, TypeError):
             total_float = 0.0
 
-        # CAPTURA DEL OBJETO DE PAGO
         datos_pago = datos.get('pago')
 
-        # 4. BLINDAJE DE COORDENADAS (La cura para el Error 500)
         def sanear_coordenada(valor):
             try:
-                # Si el valor no está vacío, lo convierte a Float. Si está vacío, devuelve None.
                 return float(valor) if str(valor).strip() != "" else None
             except (ValueError, TypeError):
                 return None
@@ -384,12 +422,11 @@ def finalizar_pedido():
         lat_dest = sanear_coordenada(datos.get('latitud_destino'))
         lon_dest = sanear_coordenada(datos.get('longitud_destino'))
 
-        # 5. CREACIÓN DEL PEDIDO (MODIFICADO PARA SEGURIDAD: Nace como 'verificando_pago')
         nuevo_pedido = Pedido(
             id_usuario=u_id,
             direccion_entrega=str(datos.get('direccion_entrega', 'Los Teques, Centro')),
             total=total_float,
-            estado='verificando_pago',  # 👉 EL CAMBIO CRUCIAL PARA LA SEGURIDAD
+            estado='verificando_pago', 
             latitud_destino=lat_dest,
             longitud_destino=lon_dest,
             datos_pago=datos_pago 
@@ -402,7 +439,6 @@ def finalizar_pedido():
         
     except Exception as e:
         db.session.rollback()
-        # IMPRIMIR ERROR REAL FORZADO EN CONSOLA
         print(">>> ERROR CRÍTICO EN FINALIZAR PEDIDO:", flush=True)
         print(traceback.format_exc(), flush=True)
         return jsonify({"mensaje": f"Error interno: {str(e)}"}), 500
@@ -427,7 +463,6 @@ def obtener_pedido(pedido_id):
 @app.route('/api/delivery/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
     try:
-        # Aquí el domiciliario SOLO verá pedidos que ya estén en 'pendiente' o 'listo_para_entrega'
         pedidos = Pedido.query.filter(Pedido.estado.in_(['pendiente', 'listo_para_entrega'])).all()
         return jsonify([{
             "id": p.id, 
@@ -505,14 +540,12 @@ def actualizar_ubicacion_post():
 
 # --- HISTORIAL Y ADMINISTRACIÓN ---
 
-# 👉 RUTAS NUEVAS PARA LA CONCILIACIÓN DE PAGOS (PANEL WEB)
 @app.route('/admin/api/pagos_pendientes', methods=['GET'])
 def get_pagos_pendientes():
     try:
         pedidos = Pedido.query.filter_by(estado='verificando_pago').all()
         lista = []
         for p in pedidos:
-            # 👉 BLINDAJE: Si datos_pago está vacío (null), inventamos uno temporal para no romper la web
             pago_seguro = p.datos_pago if p.datos_pago else {"metodo": "No reportado", "referencia": "N/A", "tasa_bcv": 0}
             
             lista.append({
@@ -532,7 +565,7 @@ def admin_aprobar_pago(pedido_id):
             return jsonify({"error": "Pedido no encontrado"}), 404
             
         if pedido.estado == 'verificando_pago':
-            pedido.estado = 'pendiente' # 👉 AQUÍ SE LIBERA PARA EL DOMICILIARIO
+            pedido.estado = 'pendiente' 
             db.session.commit()
             return jsonify({
                 "status": "success", 
@@ -544,7 +577,6 @@ def admin_aprobar_pago(pedido_id):
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
 
-# RUTAS ADMINISTRATIVAS ORIGINALES
 @app.route('/historial_viajes/<int:repartidor_id>', methods=['GET'])
 def historial_viajes(repartidor_id):
     try:
@@ -648,6 +680,77 @@ def enviar_mensaje():
         db.session.rollback()
         print("ERROR EN ENVIAR MENSAJE:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
+
+# --- RUTAS DE SEGURIDAD OTP Y RECUPERACIÓN ---
+
+@app.route('/api/solicitar_otp', methods=['POST'])
+def solicitar_otp():
+    data = request.get_json()
+    email = data.get('email')
+    proposito = data.get('proposito') 
+
+    if not email or not proposito:
+        return jsonify({'error': 'Faltan datos'}), 400
+
+    if proposito == 'recuperacion':
+        user = Usuario.query.filter_by(email=email).first()
+        if not user:
+            return jsonify({'error': 'Este correo no está registrado en Jaydi'}), 404
+    
+    if proposito == 'registro':
+        user = Usuario.query.filter_by(email=email).first()
+        if user:
+            return jsonify({'error': 'Este correo ya tiene una cuenta activa'}), 400
+
+    codigo = str(random.randint(100000, 999999))
+    expiracion = datetime.now() + timedelta(minutes=10)
+
+    CodigoOTP.query.filter_by(email=email, proposito=proposito).delete()
+
+    nuevo_otp = CodigoOTP(email=email, codigo=codigo, proposito=proposito, fecha_expiracion=expiracion)
+    db.session.add(nuevo_otp)
+    db.session.commit()
+
+    exito = enviar_correo_otp(email, codigo, proposito)
+    if exito:
+        return jsonify({'mensaje': 'Código enviado con éxito'}), 200
+    else:
+        return jsonify({'error': 'Fallo del servidor al enviar el correo'}), 500
+
+@app.route('/api/verificar_otp', methods=['POST'])
+def verificar_otp():
+    data = request.get_json()
+    email = data.get('email')
+    codigo = data.get('codigo')
+    proposito = data.get('proposito')
+
+    registro_otp = CodigoOTP.query.filter_by(email=email, codigo=codigo, proposito=proposito).first()
+
+    if not registro_otp:
+        return jsonify({'error': 'Código incorrecto'}), 400
+
+    if datetime.now() > registro_otp.fecha_expiracion:
+        return jsonify({'error': 'Este código ya expiró. Solicita uno nuevo.'}), 400
+
+    db.session.delete(registro_otp)
+    db.session.commit()
+
+    return jsonify({'mensaje': 'Identidad verificada exitosamente'}), 200
+
+@app.route('/api/reset_password', methods=['POST'])
+def reset_password():
+    data = request.get_json()
+    email = data.get('email')
+    nueva_clave = data.get('nueva_clave')
+
+    user = Usuario.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({'error': 'Usuario no encontrado'}), 404
+
+    user.password = generate_password_hash(nueva_clave)
+    db.session.commit()
+
+    return jsonify({'mensaje': 'Contraseña actualizada. Ya puedes iniciar sesión.'}), 200
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
