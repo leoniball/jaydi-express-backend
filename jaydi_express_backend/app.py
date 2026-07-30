@@ -10,6 +10,7 @@ from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 from sqlalchemy import text 
+from werkzeug.utils import secure_filename
 
 # --- IMPORTAR Y CARGAR VARIABLES DE ENTORNO OCULTAS ---
 from dotenv import load_dotenv
@@ -35,13 +36,19 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db = SQLAlchemy(app)
 
-# --- CONFIGURACIÓN DE SUBIDA DE ARCHIVOS (DELIVERY) ---
+# --- CONFIGURACIÓN DE SUBIDA DE ARCHIVOS ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads', 'documentos')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB Límite
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+
+# Configuración específica para imágenes de productos reales
+UPLOAD_FOLDER_PRODUCTOS = os.path.join(BASE_DIR, 'uploads', 'productos')
+if not os.path.exists(UPLOAD_FOLDER_PRODUCTOS):
+    os.makedirs(UPLOAD_FOLDER_PRODUCTOS)
+
 
 # --- MODELOS DE DATOS ---
 
@@ -172,6 +179,11 @@ def index():
 def ver_archivo(user_id, filename):
     directorio_usuario = os.path.join(UPLOAD_FOLDER, f"user_{user_id}")
     return send_from_directory(directorio_usuario, filename)
+
+# Ruta estática expuesta para servir las imágenes reales de productos a Flutter
+@app.route('/uploads/productos/<filename>')
+def ver_imagen_producto(filename):
+    return send_from_directory(UPLOAD_FOLDER_PRODUCTOS, filename)
 
 @app.route('/admin')
 def admin_page():
@@ -384,6 +396,92 @@ def obtener_productos():
     except Exception as e:
         print("ERROR EN OBTENER PRODUCTOS:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
+
+# Endpoint Administrativo para subir artículos reales desde la Laptop sin pasar por Flutter
+@app.route('/api/admin/productos', methods=['POST'])
+def admin_subir_producto():
+    try:
+        if 'imagen' not in request.files:
+            return jsonify({"status": "error", "mensaje": "No se incluyó el archivo de imagen"}), 400
+        
+        file = request.files['imagen']
+        if file.filename == '':
+            return jsonify({"status": "error", "mensaje": "Nombre de archivo de imagen vacío"}), 400
+
+        nombre = request.form.get('nombre')
+        descripcion = request.form.get('descripcion', '')
+        precio_raw = request.form.get('precio')
+        stock_raw = request.form.get('stock', '10')
+        comercio_id_raw = request.form.get('comercio_id')
+
+        if not nombre or not precio_raw:
+            return jsonify({"status": "error", "mensaje": "El nombre y el precio son obligatorios"}), 400
+
+        try:
+            precio = float(precio_raw)
+            stock = int(stock_raw)
+        except ValueError:
+            return jsonify({"status": "error", "mensaje": "Formato de precio o stock inválido numéricamente"}), 400
+
+        # Manejo y protección estricta de la restricción NOT NULL de la FK 'comercio_id' en Neon
+        if comercio_id_raw:
+            comercio_id = int(comercio_id_raw)
+            comercio_existe = Comercio.query.get(comercio_id)
+            if not comercio_existe:
+                return jsonify({"status": "error", "mensaje": f"El comercio_id {comercio_id} asignado no existe"}), 404
+        else:
+            primer_comercio = Comercio.query.first()
+            if not primer_comercio:
+                nuevo_comercio = Comercio(
+                    nombre="Tienda Principal Jaydi", 
+                    rif="J-00000000-0", 
+                    direccion="Sede Central Los Teques", 
+                    categoria="General"
+                )
+                db.session.add(nuevo_comercio)
+                db.session.commit()
+                comercio_id = nuevo_comercio.id
+            else:
+                comercio_id = primer_comercio.id
+
+        # Guardado físico de archivos en disco duro / persistencia del contenedor
+        extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else 'jpg'
+        timestamp_unico = int(datetime.utcnow().timestamp())
+        nombre_seguro_archivo = secure_filename(f"prod_{timestamp_unico}_{random.randint(100, 999)}.{extension}")
+        
+        ruta_guardado_fisico = os.path.join(UPLOAD_FOLDER_PRODUCTOS, nombre_seguro_archivo)
+        file.save(ruta_guardado_fisico)
+
+        # URI relativa del recurso estático
+        url_recurso_estatico = f"/uploads/productos/{nombre_seguro_archivo}"
+
+        nuevo_producto = Producto(
+            nombre=nombre,
+            descripcion=descripcion,
+            precio=precio,
+            stock=stock,
+            imagen_url=url_recurso_estatico,
+            comercio_id=comercio_id
+        )
+        db.session.add(nuevo_producto)
+        db.session.commit()
+
+        return jsonify({
+            "status": "success",
+            "mensaje": "Artículo cargado y publicado en el ecosistema con éxito",
+            "producto": {
+                "id": nuevo_producto.id,
+                "nombre": nuevo_producto.nombre,
+                "precio": nuevo_producto.precio,
+                "imagen_url": nuevo_producto.imagen_url,
+                "comercio_id": nuevo_producto.comercio_id
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR CRÍTICO EN OPERACIÓN ADMINISTRATIVA:\n", traceback.format_exc())
+        return jsonify({"status": "error", "mensaje": f"Fallo interno del servidor: {str(e)}"}), 500
 
 @app.route('/finalizar_pedido', methods=['POST'])
 def finalizar_pedido():
@@ -752,6 +850,38 @@ def reset_password():
     db.session.commit()
 
     return jsonify({'mensaje': 'Contraseña actualizada. Ya puedes iniciar sesión.'}), 200
+
+
+# --- NUEVO WEBHOOK BANCARIO ---
+
+@app.route('/api/pagos/webhook', methods=['POST'])
+def webhook_pagos_banco():
+    try:
+        datos_banco = request.get_json()
+        if not datos_banco:
+            return jsonify({"status": "error", "mensaje": "Payload vacío"}), 400
+        
+        # ATENCIÓN: Aquí debes programar la validación de seguridad que te indique el banco (ej. validar un Token o firma).
+        # Si no lo haces, cualquiera puede enviar solicitudes a este endpoint y aprobar compras fraudulentas.
+
+        # Ejemplo de estructura lógica esperada (DEBES ADAPTAR ESTO a lo que el banco envíe realmente):
+        # referencia_pedido = datos_banco.get('referencia')
+        # estado_transaccion = datos_banco.get('estado')
+        
+        # pedido = Pedido.query.filter_by(id=referencia_pedido).first()
+        # if pedido and estado_transaccion == 'aprobado':
+        #     pedido.estado = 'pendiente'  # Esto lo manda a los motorizados
+        #     db.session.commit()
+
+        print(f">>> WEBHOOK BANCARIO RECIBIDO: {datos_banco}", flush=True)
+        
+        # El banco siempre exige que respondas un código 200 rápido para confirmar recepción.
+        return jsonify({"status": "success", "mensaje": "Notificación recibida procesada"}), 200
+        
+    except Exception as e:
+        print("ERROR EN WEBHOOK BANCARIO:\n", traceback.format_exc())
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
