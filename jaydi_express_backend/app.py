@@ -60,6 +60,7 @@ class Usuario(db.Model):
     telefono = db.Column(db.String(20))   
     email = db.Column(db.String(120), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False) 
+    sexo = db.Column(db.String(50), default='Prefiero no decir') # NUEVA COLUMNA PARA SALUDO DE GÉNERO
     rol = db.Column(db.String(20), default='cliente') 
     verificado = db.Column(db.Boolean, default=False)
     saldo = db.Column(db.Float, default=0.0)
@@ -192,6 +193,9 @@ def admin_page():
 @app.route('/actualizar_bd_perfil')
 def actualizar_bd_perfil():
     try:
+        # AÑADIDA ACTUALIZACIÓN DE COLUMNA SEXO PARA SALUDO JAYDI
+        try: db.session.execute(text("ALTER TABLE usuario ADD COLUMN sexo VARCHAR(50) DEFAULT 'Prefiero no decir';"))
+        except: pass
         try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN foto_perfil TEXT;'))
         except: pass
         try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN vehiculo VARCHAR(50);'))
@@ -217,7 +221,7 @@ def actualizar_bd_perfil():
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN datos_pago JSON;'))
         except: pass
         db.session.commit()
-        return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada."}), 200
+        return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada con la columna Sexo."}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"mensaje": "Aviso: " + str(e)}), 200
@@ -237,12 +241,16 @@ def registrar():
             return jsonify({"status": "error", "mensaje": "Este correo ya está registrado", "error": "El email ya existe"}), 400
         
         nuevo_rol = datos.get('rol', 'cliente')
+        # CAPTURAMOS EL SEXO ENVIADO DESDE FLUTTER
+        sexo_ingresado = datos.get('sexo', 'Prefiero no decir') 
+
         nuevo_usuario = Usuario(
             nombre=datos.get('nombre'),
             apellido=datos.get('apellido'),
             telefono=datos.get('telefono'),
             email=email,
             password=generate_password_hash(datos.get('password')),
+            sexo=sexo_ingresado, # GUARDAMOS EN NEON
             rol=nuevo_rol,
             verificado=False
         )
@@ -254,6 +262,7 @@ def registrar():
             "nombre": nuevo_usuario.nombre, 
             "apellido": nuevo_usuario.apellido, 
             "email": nuevo_usuario.email,
+            "sexo": nuevo_usuario.sexo, # LO DEVOLVEMOS A FLUTTER
             "status": "pendiente",
             "rol": nuevo_rol
         }
@@ -283,6 +292,7 @@ def login():
                 "nombre": usuario.nombre, 
                 "apellido": usuario.apellido or "",
                 "email": usuario.email, 
+                "sexo": usuario.sexo or "Prefiero no decir", # ENVIAMOS EL SEXO AL INICIAR SESIÓN
                 "rol": usuario.rol,
                 "status": "aprobado" if usuario.verificado else "pendiente",
                 "es_verificado": usuario.verificado
@@ -314,6 +324,7 @@ def gestionar_perfil(user_id):
                 "nombre": usuario.nombre,
                 "apellido": usuario.apellido or "",
                 "email": usuario.email,
+                "sexo": usuario.sexo or "Prefiero no decir", # AÑADIDO AQUI TAMBIEN
                 "telefono": usuario.telefono or "",
                 "foto_perfil": usuario.foto_perfil or "",
                 "vehiculo": usuario.vehiculo or "",
@@ -335,6 +346,7 @@ def gestionar_perfil(user_id):
             if 'telefono' in datos: usuario.telefono = datos['telefono']
             if 'nombre' in datos: usuario.nombre = datos['nombre']
             if 'apellido' in datos: usuario.apellido = datos['apellido']
+            if 'sexo' in datos: usuario.sexo = datos['sexo'] # PERMITIMOS ACTUALIZAR EL SEXO DESDE EL PERFIL
 
             if 'password_actual' in datos and 'password_nuevo' in datos:
                 if check_password_hash(usuario.password, datos['password_actual']):
@@ -397,7 +409,6 @@ def obtener_productos():
         print("ERROR EN OBTENER PRODUCTOS:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
 
-# Endpoint Administrativo para subir artículos reales desde la Laptop sin pasar por Flutter
 @app.route('/api/admin/productos', methods=['POST'])
 def admin_subir_producto():
     try:
@@ -423,7 +434,6 @@ def admin_subir_producto():
         except ValueError:
             return jsonify({"status": "error", "mensaje": "Formato de precio o stock inválido numéricamente"}), 400
 
-        # Manejo y protección estricta de la restricción NOT NULL de la FK 'comercio_id' en Neon
         if comercio_id_raw:
             comercio_id = int(comercio_id_raw)
             comercio_existe = Comercio.query.get(comercio_id)
@@ -444,7 +454,6 @@ def admin_subir_producto():
             else:
                 comercio_id = primer_comercio.id
 
-        # Guardado físico de archivos en disco duro / persistencia del contenedor
         extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else 'jpg'
         timestamp_unico = int(datetime.utcnow().timestamp())
         nombre_seguro_archivo = secure_filename(f"prod_{timestamp_unico}_{random.randint(100, 999)}.{extension}")
@@ -452,7 +461,6 @@ def admin_subir_producto():
         ruta_guardado_fisico = os.path.join(UPLOAD_FOLDER_PRODUCTOS, nombre_seguro_archivo)
         file.save(ruta_guardado_fisico)
 
-        # URI relativa del recurso estático
         url_recurso_estatico = f"/uploads/productos/{nombre_seguro_archivo}"
 
         nuevo_producto = Producto(
@@ -671,7 +679,7 @@ def admin_aprobar_pago(pedido_id):
                 "mensaje": f"Pago del pedido {pedido_id} verificado. Orden enviada a los domiciliarios."
             }), 200
         else:
-            return jsonify({"aviso": f"El pedido ya tiene estado: {pedido.estado}"}), 200
+            return jsonify({"aviso": f"El pedido ya ha sido procesado (estado actual: {pedido.estado})"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
@@ -860,22 +868,8 @@ def webhook_pagos_banco():
         datos_banco = request.get_json()
         if not datos_banco:
             return jsonify({"status": "error", "mensaje": "Payload vacío"}), 400
-        
-        # ATENCIÓN: Aquí debes programar la validación de seguridad que te indique el banco (ej. validar un Token o firma).
-        # Si no lo haces, cualquiera puede enviar solicitudes a este endpoint y aprobar compras fraudulentas.
-
-        # Ejemplo de estructura lógica esperada (DEBES ADAPTAR ESTO a lo que el banco envíe realmente):
-        # referencia_pedido = datos_banco.get('referencia')
-        # estado_transaccion = datos_banco.get('estado')
-        
-        # pedido = Pedido.query.filter_by(id=referencia_pedido).first()
-        # if pedido and estado_transaccion == 'aprobado':
-        #     pedido.estado = 'pendiente'  # Esto lo manda a los motorizados
-        #     db.session.commit()
 
         print(f">>> WEBHOOK BANCARIO RECIBIDO: {datos_banco}", flush=True)
-        
-        # El banco siempre exige que respondas un código 200 rápido para confirmar recepción.
         return jsonify({"status": "success", "mensaje": "Notificación recibida procesada"}), 200
         
     except Exception as e:
