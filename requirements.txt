@@ -1,6 +1,9 @@
-flask
-flask-cors
-psycopg2-binary
+Flask
 Flask-SQLAlchemy
-gunicorn
+Flask-Cors
+Werkzeug
 python-dotenv
+SQLAlchemy
+psycopg2-binary
+flask-socketio==5.3.6
+eventlet==0.33.3

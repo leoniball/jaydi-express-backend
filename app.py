@@ -10,6 +10,10 @@ from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
 from sqlalchemy import text 
+from werkzeug.utils import secure_filename
+
+# --- NUEVO: IMPORTAR SOCKETIO ---
+from flask_socketio import SocketIO, emit, join_room, leave_room
 
 # --- IMPORTAR Y CARGAR VARIABLES DE ENTORNO OCULTAS ---
 from dotenv import load_dotenv
@@ -17,6 +21,9 @@ load_dotenv()
 
 app = Flask(__name__)
 CORS(app)
+
+# --- NUEVO: INICIALIZAR SOCKETIO ---
+socketio = SocketIO(app, cors_allowed_origins="*", async_mode='eventlet')
 
 # --- CONFIGURACIÓN DE LA BASE DE DATOS (NEON) ---
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
@@ -35,13 +42,19 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db = SQLAlchemy(app)
 
-# --- CONFIGURACIÓN DE SUBIDA DE ARCHIVOS (DELIVERY) ---
+# --- CONFIGURACIÓN DE SUBIDA DE ARCHIVOS ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads', 'documentos')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB Límite
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
+
+# Configuración específica para imágenes de productos reales
+UPLOAD_FOLDER_PRODUCTOS = os.path.join(BASE_DIR, 'uploads', 'productos')
+if not os.path.exists(UPLOAD_FOLDER_PRODUCTOS):
+    os.makedirs(UPLOAD_FOLDER_PRODUCTOS)
+
 
 # --- MODELOS DE DATOS ---
 
@@ -53,6 +66,7 @@ class Usuario(db.Model):
     telefono = db.Column(db.String(20))   
     email = db.Column(db.String(120), unique=True, nullable=False)
     password = db.Column(db.String(255), nullable=False) 
+    sexo = db.Column(db.String(50), default='Prefiero no decir') 
     rol = db.Column(db.String(20), default='cliente') 
     verificado = db.Column(db.Boolean, default=False)
     saldo = db.Column(db.Float, default=0.0)
@@ -113,13 +127,12 @@ class DocumentoRepartidor(db.Model):
     tipo_documento = db.Column(db.String(50), nullable=False)
     ruta_archivo_servidor = db.Column(db.String(255), nullable=False)
 
-# --- TABLA TEMPORAL PARA CÓDIGOS OTP ---
 class CodigoOTP(db.Model):
     __tablename__ = 'codigos_otp'
     id = db.Column(db.Integer, primary_key=True)
     email = db.Column(db.String(120), nullable=False)
     codigo = db.Column(db.String(6), nullable=False)
-    proposito = db.Column(db.String(50), nullable=False) # 'registro' o 'recuperacion'
+    proposito = db.Column(db.String(50), nullable=False) 
     fecha_expiracion = db.Column(db.DateTime, nullable=False)
 
 with app.app_context():
@@ -173,6 +186,10 @@ def ver_archivo(user_id, filename):
     directorio_usuario = os.path.join(UPLOAD_FOLDER, f"user_{user_id}")
     return send_from_directory(directorio_usuario, filename)
 
+@app.route('/uploads/productos/<filename>')
+def ver_imagen_producto(filename):
+    return send_from_directory(UPLOAD_FOLDER_PRODUCTOS, filename)
+
 @app.route('/admin')
 def admin_page():
     return render_template('admin.html') 
@@ -180,6 +197,8 @@ def admin_page():
 @app.route('/actualizar_bd_perfil')
 def actualizar_bd_perfil():
     try:
+        try: db.session.execute(text("ALTER TABLE usuario ADD COLUMN sexo VARCHAR(50) DEFAULT 'Prefiero no decir';"))
+        except: pass
         try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN foto_perfil TEXT;'))
         except: pass
         try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN vehiculo VARCHAR(50);'))
@@ -205,7 +224,7 @@ def actualizar_bd_perfil():
         try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN datos_pago JSON;'))
         except: pass
         db.session.commit()
-        return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada."}), 200
+        return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada con la columna Sexo."}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"mensaje": "Aviso: " + str(e)}), 200
@@ -225,12 +244,15 @@ def registrar():
             return jsonify({"status": "error", "mensaje": "Este correo ya está registrado", "error": "El email ya existe"}), 400
         
         nuevo_rol = datos.get('rol', 'cliente')
+        sexo_ingresado = datos.get('sexo', 'Prefiero no decir') 
+
         nuevo_usuario = Usuario(
             nombre=datos.get('nombre'),
             apellido=datos.get('apellido'),
             telefono=datos.get('telefono'),
             email=email,
             password=generate_password_hash(datos.get('password')),
+            sexo=sexo_ingresado, 
             rol=nuevo_rol,
             verificado=False
         )
@@ -242,6 +264,7 @@ def registrar():
             "nombre": nuevo_usuario.nombre, 
             "apellido": nuevo_usuario.apellido, 
             "email": nuevo_usuario.email,
+            "sexo": nuevo_usuario.sexo,
             "status": "pendiente",
             "rol": nuevo_rol
         }
@@ -271,6 +294,7 @@ def login():
                 "nombre": usuario.nombre, 
                 "apellido": usuario.apellido or "",
                 "email": usuario.email, 
+                "sexo": usuario.sexo or "Prefiero no decir",
                 "rol": usuario.rol,
                 "status": "aprobado" if usuario.verificado else "pendiente",
                 "es_verificado": usuario.verificado
@@ -302,6 +326,7 @@ def gestionar_perfil(user_id):
                 "nombre": usuario.nombre,
                 "apellido": usuario.apellido or "",
                 "email": usuario.email,
+                "sexo": usuario.sexo or "Prefiero no decir", 
                 "telefono": usuario.telefono or "",
                 "foto_perfil": usuario.foto_perfil or "",
                 "vehiculo": usuario.vehiculo or "",
@@ -323,6 +348,7 @@ def gestionar_perfil(user_id):
             if 'telefono' in datos: usuario.telefono = datos['telefono']
             if 'nombre' in datos: usuario.nombre = datos['nombre']
             if 'apellido' in datos: usuario.apellido = datos['apellido']
+            if 'sexo' in datos: usuario.sexo = datos['sexo'] 
 
             if 'password_actual' in datos and 'password_nuevo' in datos:
                 if check_password_hash(usuario.password, datos['password_actual']):
@@ -384,6 +410,88 @@ def obtener_productos():
     except Exception as e:
         print("ERROR EN OBTENER PRODUCTOS:\n", traceback.format_exc())
         return jsonify({"mensaje": str(e)}), 500
+
+@app.route('/api/admin/productos', methods=['POST'])
+def admin_subir_producto():
+    try:
+        if 'imagen' not in request.files:
+            return jsonify({"status": "error", "mensaje": "No se incluyó el archivo de imagen"}), 400
+        
+        file = request.files['imagen']
+        if file.filename == '':
+            return jsonify({"status": "error", "mensaje": "Nombre de archivo de imagen vacío"}), 400
+
+        nombre = request.form.get('nombre')
+        descripcion = request.form.get('descripcion', '')
+        precio_raw = request.form.get('precio')
+        stock_raw = request.form.get('stock', '10')
+        comercio_id_raw = request.form.get('comercio_id')
+
+        if not nombre or not precio_raw:
+            return jsonify({"status": "error", "mensaje": "El nombre y el precio son obligatorios"}), 400
+
+        try:
+            precio = float(precio_raw)
+            stock = int(stock_raw)
+        except ValueError:
+            return jsonify({"status": "error", "mensaje": "Formato de precio o stock inválido numéricamente"}), 400
+
+        if comercio_id_raw:
+            comercio_id = int(comercio_id_raw)
+            comercio_existe = Comercio.query.get(comercio_id)
+            if not comercio_existe:
+                return jsonify({"status": "error", "mensaje": f"El comercio_id {comercio_id} asignado no existe"}), 404
+        else:
+            primer_comercio = Comercio.query.first()
+            if not primer_comercio:
+                nuevo_comercio = Comercio(
+                    nombre="Tienda Principal Jaydi", 
+                    rif="J-00000000-0", 
+                    direccion="Sede Central Los Teques", 
+                    categoria="General"
+                )
+                db.session.add(nuevo_comercio)
+                db.session.commit()
+                comercio_id = nuevo_comercio.id
+            else:
+                comercio_id = primer_comercio.id
+
+        extension = file.filename.rsplit('.', 1)[1].lower() if '.' in file.filename else 'jpg'
+        timestamp_unico = int(datetime.utcnow().timestamp())
+        nombre_seguro_archivo = secure_filename(f"prod_{timestamp_unico}_{random.randint(100, 999)}.{extension}")
+        
+        ruta_guardado_fisico = os.path.join(UPLOAD_FOLDER_PRODUCTOS, nombre_seguro_archivo)
+        file.save(ruta_guardado_fisico)
+
+        url_recurso_estatico = f"/uploads/productos/{nombre_seguro_archivo}"
+
+        nuevo_producto = Producto(
+            nombre=nombre,
+            descripcion=descripcion,
+            precio=precio,
+            stock=stock,
+            imagen_url=url_recurso_estatico,
+            comercio_id=comercio_id
+        )
+        db.session.add(nuevo_producto)
+        db.session.commit()
+
+        return jsonify({
+            "status": "success",
+            "mensaje": "Artículo cargado y publicado en el ecosistema con éxito",
+            "producto": {
+                "id": nuevo_producto.id,
+                "nombre": nuevo_producto.nombre,
+                "precio": nuevo_producto.precio,
+                "imagen_url": nuevo_producto.imagen_url,
+                "comercio_id": nuevo_producto.comercio_id
+            }
+        }), 201
+
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR CRÍTICO EN OPERACIÓN ADMINISTRATIVA:\n", traceback.format_exc())
+        return jsonify({"status": "error", "mensaje": f"Fallo interno del servidor: {str(e)}"}), 500
 
 @app.route('/finalizar_pedido', methods=['POST'])
 def finalizar_pedido():
@@ -573,7 +681,7 @@ def admin_aprobar_pago(pedido_id):
                 "mensaje": f"Pago del pedido {pedido_id} verificado. Orden enviada a los domiciliarios."
             }), 200
         else:
-            return jsonify({"aviso": f"El pedido ya tiene estado: {pedido.estado}"}), 200
+            return jsonify({"aviso": f"El pedido ya ha sido procesado (estado actual: {pedido.estado})"}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
@@ -651,8 +759,10 @@ def verificar_estatus(user_id):
 def obtener_mensajes(pedido_id):
     try:
         mensajes = Mensaje.query.filter_by(pedido_id=pedido_id).order_by(Mensaje.fecha.asc()).all()
+        # SE CORRIGIÓ ESTA RESPUESTA PARA DEVOLVER EL pedido_id A FLUTTER
         return jsonify([{
             'id': m.id,
+            'pedido_id': m.pedido_id, 
             'remitente_tipo': m.remitente_tipo,
             'texto': m.texto,
             'fecha': m.fecha.strftime('%Y-%m-%d %H:%M:%S')
@@ -753,6 +863,78 @@ def reset_password():
 
     return jsonify({'mensaje': 'Contraseña actualizada. Ya puedes iniciar sesión.'}), 200
 
+# --- NUEVO WEBHOOK BANCARIO ---
+
+@app.route('/api/pagos/webhook', methods=['POST'])
+def webhook_pagos_banco():
+    try:
+        datos_banco = request.get_json()
+        if not datos_banco:
+            return jsonify({"status": "error", "mensaje": "Payload vacío"}), 400
+
+        print(f">>> WEBHOOK BANCARIO RECIBIDO: {datos_banco}", flush=True)
+        return jsonify({"status": "success", "mensaje": "Notificación recibida procesada"}), 200
+        
+    except Exception as e:
+        print("ERROR EN WEBHOOK BANCARIO:\n", traceback.format_exc())
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+
+# =======================================================
+# NUEVO: LÓGICA DE WEBSOCKETS PARA CHAT EN TIEMPO REAL
+# =======================================================
+
+@socketio.on('unirse_sala_pedido')
+def handle_join_room(data):
+    pedido_id = data.get('pedido_id')
+    if pedido_id:
+        room = f"pedido_{pedido_id}"
+        join_room(room)
+        print(f"✅ Cliente unido a sala exclusiva: {room}")
+
+@socketio.on('salir_sala_pedido')
+def handle_leave_room(data):
+    pedido_id = data.get('pedido_id')
+    if pedido_id:
+        room = f"pedido_{pedido_id}"
+        leave_room(room)
+        print(f"🚪 Cliente salió de sala: {room}")
+
+@socketio.on('enviar_mensaje_pedido')
+def handle_send_message(data):
+    pedido_id = data.get('pedido_id')
+    remitente_tipo = data.get('remitente_tipo')
+    texto = data.get('texto')
+
+    if not all([pedido_id, remitente_tipo, texto]):
+        return 
+
+    try:
+        nuevo_mensaje = Mensaje(
+            pedido_id=pedido_id, 
+            remitente_tipo=remitente_tipo, 
+            texto=texto
+        )
+        db.session.add(nuevo_mensaje)
+        db.session.commit()
+
+        room = f"pedido_{pedido_id}"
+        mensaje_estructurado = {
+            'id': str(nuevo_mensaje.id),
+            'pedido_id': str(pedido_id),
+            'remitente_tipo': remitente_tipo,
+            'texto': texto,
+            'fecha': nuevo_mensaje.fecha.strftime('%Y-%m-%d %H:%M:%S')
+        }
+        
+        emit('nuevo_mensaje_pedido', mensaje_estructurado, to=room)
+        print(f"📩 Mensaje reenviado por Socket a {room}")
+
+    except Exception as e:
+        db.session.rollback()
+        print(f"❌ Error al guardar mensaje Socket: {str(e)}")
+
+
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
-    app.run(host='0.0.0.0', port=port)
+    socketio.run(app, host='0.0.0.0', port=port, debug=False)
