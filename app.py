@@ -1,4 +1,7 @@
 import os
+import json
+import ssl
+import urllib.request
 import traceback
 import smtplib
 import random
@@ -165,15 +168,14 @@ with app.app_context():
     sincronizar_columnas_bd()
     print("¡Base de Datos de Neon Sincronizada y Lista (Unificada)!", flush=True)
 
-# --- MOTOR DE ENVÍO DE CORREOS (GMAIL CON RESPALDO EN LOGS) ---
+# --- MOTOR DE ENVÍO DE CORREOS MULTICANAL (465 SSL / 587 TLS / 443 HTTPS) ---
 def enviar_correo_otp(destinatario, codigo, proposito):
     print(f"🔑 >>> [OTP JAYDI] Correo: {destinatario} | Código: {codigo} | Propósito: {proposito} <<<", flush=True)
-    remitente = os.environ.get('SMTP_USER')
-    password = os.environ.get('SMTP_PASSWORD')
 
-    if not remitente or not password:
-        print("⚠️ AVISO: Credenciales SMTP no configuradas en Render. Usa el código impreso arriba en los Logs.", flush=True)
-        return True
+    remitente = (os.environ.get('SMTP_USER') or os.environ.get('MAIL_USERNAME') or '').strip()
+    password = (os.environ.get('SMTP_PASSWORD') or os.environ.get('MAIL_PASSWORD') or '').replace(' ', '').strip()
+    url_script = os.environ.get('GOOGLE_SCRIPT_URL', '').strip()
+    brevo_key = os.environ.get('BREVO_API_KEY', '').strip()
 
     if proposito == 'registro':
         asunto = "Tu código de verificación - Jaydi Express"
@@ -182,22 +184,74 @@ def enviar_correo_otp(destinatario, codigo, proposito):
         asunto = "Recuperación de contraseña - Jaydi Express"
         cuerpo = f"Has solicitado recuperar tu contraseña.\n\nTu código de seguridad es: {codigo}\n\nSi no fuiste tú, ignora este mensaje."
 
+    # Canal 1: API HTTP Brevo (Puerto 443 - Si se configura BREVO_API_KEY)
+    if brevo_key and remitente:
+        try:
+            payload = json.dumps({
+                "sender": {"name": "Jaydi Express", "email": remitente},
+                "to": [{"email": destinatario}],
+                "subject": asunto,
+                "textContent": cuerpo
+            }).encode('utf-8')
+            req = urllib.request.Request(
+                "https://api.brevo.com/v3/smtp/email",
+                data=payload,
+                headers={'accept': 'application/json', 'api-key': brevo_key, 'content-type': 'application/json'},
+                method='POST'
+            )
+            with urllib.request.urlopen(req, timeout=10) as resp:
+                if resp.status in (200, 201, 202):
+                    print(f"✅ Correo OTP enviado vía HTTPS (Brevo) a {destinatario}", flush=True)
+                    return True
+        except Exception as e_api:
+            print(f"⚠️ Aviso API Brevo ({e_api}). Probando siguiente canal...", flush=True)
+
+    # Canal 2: Puente HTTPS Google Script (Puerto 443 - Si se configura GOOGLE_SCRIPT_URL)
+    if url_script:
+        try:
+            payload = json.dumps({"destinatario": destinatario, "asunto": asunto, "cuerpo": cuerpo}).encode('utf-8')
+            req = urllib.request.Request(url_script, data=payload, headers={'Content-Type': 'application/json'}, method='POST')
+            with urllib.request.urlopen(req, timeout=12) as resp:
+                if resp.status in (200, 302):
+                    print(f"✅ Correo OTP enviado vía HTTPS (Google Script) a {destinatario}", flush=True)
+                    return True
+        except Exception as e_gs:
+            print(f"⚠️ Aviso Google Script ({e_gs}). Probando SMTP directo...", flush=True)
+
+    if not remitente or not password:
+        print("⚠️ AVISO: Credenciales SMTP no configuradas en Render. Usa el código impreso arriba en los Logs.", flush=True)
+        return True
+
     msg = MIMEMultipart()
-    msg['From'] = remitente
+    msg['From'] = f"Jaydi Express <{remitente}>"
     msg['To'] = destinatario
     msg['Subject'] = asunto
-    msg.attach(MIMEText(cuerpo, 'plain'))
+    msg.attach(MIMEText(cuerpo, 'plain', 'utf-8'))
 
+    contexto_ssl = ssl.create_default_context()
+
+    # Canal 3: Gmail SMTP_SSL por Puerto 465 (Evita el bloqueo de STARTTLS)
     try:
-        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=8)
-        server.starttls()
-        server.login(remitente, password)
-        server.send_message(msg)
-        server.quit()
-        print(f"✅ Correo OTP enviado por SMTP a {destinatario}", flush=True)
+        with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10, context=contexto_ssl) as server:
+            server.login(remitente, password)
+            server.send_message(msg)
+        print(f"✅ Correo OTP enviado por puerto 465 (SSL) a {destinatario}", flush=True)
         return True
-    except Exception as e:
-        print(f"⚠️ Aviso SMTP ({e}). Usa el código {codigo} mostrado en los Logs de Render.", flush=True)
+    except Exception as e_ssl:
+        print(f"⚠️ Falló puerto 465 ({e_ssl}). Probando puerto 587...", flush=True)
+
+    # Canal 4: Gmail SMTP por Puerto 587 (STARTTLS tradicional)
+    try:
+        with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as server:
+            server.ehlo()
+            server.starttls(context=contexto_ssl)
+            server.ehlo()
+            server.login(remitente, password)
+            server.send_message(msg)
+        print(f"✅ Correo OTP enviado por puerto 587 (TLS) a {destinatario}", flush=True)
+        return True
+    except Exception as e_tls:
+        print(f"⚠️ Aviso SMTP ({e_tls}). Usa el código {codigo} mostrado en los Logs de Render.", flush=True)
         return True
 
 # --- EVENTOS WEBSOCKET PARA EL CHAT EN VIVO ---
