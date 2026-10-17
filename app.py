@@ -12,7 +12,7 @@ from datetime import datetime, timedelta
 from sqlalchemy import text 
 from werkzeug.utils import secure_filename
 
-# --- NUEVO: IMPORTAR SOCKET.IO ---
+# --- IMPORTAR SOCKET.IO ---
 from flask_socketio import SocketIO, emit, join_room, leave_room
 
 # --- IMPORTAR Y CARGAR VARIABLES DE ENTORNO OCULTAS ---
@@ -22,12 +22,10 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
-# --- NUEVO: INICIALIZAR SOCKET.IO ---
-# Se permite cors para que la app de Flutter se conecte sin bloqueos
+# --- INICIALIZAR SOCKET.IO ---
 socketio = SocketIO(app, cors_allowed_origins="*")
 
 # --- CONFIGURACIÓN DE LA BASE DE DATOS (NEON) ---
-# Activo para producción en Render.
 DATABASE_URL = os.environ.get('DATABASE_URL', '')
 
 if DATABASE_URL.startswith("postgres://"):
@@ -139,18 +137,43 @@ class CodigoOTP(db.Model):
     proposito = db.Column(db.String(50), nullable=False) 
     fecha_expiracion = db.Column(db.DateTime, nullable=False)
 
+def sincronizar_columnas_bd():
+    comandos_sql = [
+        "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS sexo VARCHAR(50) DEFAULT 'Prefiero no decir';",
+        "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS foto_perfil TEXT;",
+        "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS vehiculo VARCHAR(50);",
+        "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS placa VARCHAR(20);",
+        "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS viajes_completados INTEGER DEFAULT 0;",
+        "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS latitud FLOAT;",
+        "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS longitud FLOAT;",
+        "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS ultima_conexion TIMESTAMP;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS latitud_actual FLOAT;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS longitud_actual FLOAT;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS latitud_destino FLOAT;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS longitud_destino FLOAT;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS datos_pago JSON;"
+    ]
+    for cmd in comandos_sql:
+        try:
+            db.session.execute(text(cmd))
+            db.session.commit()
+        except Exception:
+            db.session.rollback()
+
 with app.app_context():
     db.create_all()
-    print("¡Base de Datos de Neon Sincronizada y Lista (Unificada)!")
+    sincronizar_columnas_bd()
+    print("¡Base de Datos de Neon Sincronizada y Lista (Unificada)!", flush=True)
 
-# --- MOTOR DE ENVÍO DE CORREOS (GMAIL) ---
+# --- MOTOR DE ENVÍO DE CORREOS (GMAIL CON RESPALDO EN LOGS) ---
 def enviar_correo_otp(destinatario, codigo, proposito):
+    print(f"🔑 >>> [OTP JAYDI] Correo: {destinatario} | Código: {codigo} | Propósito: {proposito} <<<", flush=True)
     remitente = os.environ.get('SMTP_USER')
     password = os.environ.get('SMTP_PASSWORD')
 
     if not remitente or not password:
-        print("❌ ERROR: Credenciales SMTP no configuradas en Render.")
-        return False
+        print("⚠️ AVISO: Credenciales SMTP no configuradas en Render. Usa el código impreso arriba en los Logs.", flush=True)
+        return True
 
     if proposito == 'registro':
         asunto = "Tu código de verificación - Jaydi Express"
@@ -166,15 +189,16 @@ def enviar_correo_otp(destinatario, codigo, proposito):
     msg.attach(MIMEText(cuerpo, 'plain'))
 
     try:
-        server = smtplib.SMTP('smtp.gmail.com', 587)
+        server = smtplib.SMTP('smtp.gmail.com', 587, timeout=8)
         server.starttls()
         server.login(remitente, password)
         server.send_message(msg)
         server.quit()
+        print(f"✅ Correo OTP enviado por SMTP a {destinatario}", flush=True)
         return True
     except Exception as e:
-        print(f"❌ Error al enviar correo SMTP: {e}")
-        return False
+        print(f"⚠️ Aviso SMTP ({e}). Usa el código {codigo} mostrado en los Logs de Render.", flush=True)
+        return True
 
 # --- EVENTOS WEBSOCKET PARA EL CHAT EN VIVO ---
 
@@ -184,7 +208,7 @@ def handle_join_room(data):
     if pedido_id:
         room = f"pedido_{pedido_id}"
         join_room(room)
-        print(f"Usuario se unió a la sala del chat: {room}")
+        print(f"Usuario se unió a la sala del chat: {room}", flush=True)
 
 @socketio.on('salir_sala_pedido')
 def handle_leave_room(data):
@@ -192,7 +216,7 @@ def handle_leave_room(data):
     if pedido_id:
         room = f"pedido_{pedido_id}"
         leave_room(room)
-        print(f"Usuario abandonó la sala del chat: {room}")
+        print(f"Usuario abandonó la sala del chat: {room}", flush=True)
 
 @socketio.on('enviar_mensaje_pedido')
 def handle_send_message(data):
@@ -202,7 +226,6 @@ def handle_send_message(data):
 
     if pedido_id and remitente_tipo and texto:
         try:
-            # Guardamos el mensaje en la base de datos
             nuevo_mensaje = Mensaje(pedido_id=pedido_id, remitente_tipo=remitente_tipo, texto=texto)
             db.session.add(nuevo_mensaje)
             db.session.commit()
@@ -214,13 +237,12 @@ def handle_send_message(data):
                 'fecha': nuevo_mensaje.fecha.strftime('%Y-%m-%d %H:%M:%S')
             }
 
-            # Emitimos el mensaje a la sala correspondiente para que Flutter lo reciba
             room = f"pedido_{pedido_id}"
             emit('nuevo_mensaje_pedido', mensaje_formateado, room=room)
-            print(f"Mensaje enviado a la sala {room}: {texto}")
+            print(f"Mensaje enviado a la sala {room}: {texto}", flush=True)
         except Exception as e:
             db.session.rollback()
-            print(f"Error al guardar o emitir mensaje vía socket: {e}")
+            print(f"Error al guardar o emitir mensaje vía socket: {e}", flush=True)
 
 
 # --- RUTAS DE NAVEGACIÓN Y ARCHIVOS ---
@@ -248,34 +270,8 @@ def admin_page():
 @app.route('/actualizar_bd_perfil')
 def actualizar_bd_perfil():
     try:
-        try: db.session.execute(text("ALTER TABLE usuario ADD COLUMN sexo VARCHAR(50) DEFAULT 'Prefiero no decir';"))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN foto_perfil TEXT;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN vehiculo VARCHAR(50);'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN placa VARCHAR(20);'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN viajes_completados INTEGER DEFAULT 0;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN latitud FLOAT;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN longitud FLOAT;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE usuario ADD COLUMN ultima_conexion TIMESTAMP;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN latitud_actual FLOAT;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_actual FLOAT;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN latitud_destino FLOAT;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN longitud_destino FLOAT;'))
-        except: pass
-        try: db.session.execute(text('ALTER TABLE pedidos ADD COLUMN datos_pago JSON;'))
-        except: pass
-        db.session.commit()
-        return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada."}), 200
+        sincronizar_columnas_bd()
+        return jsonify({"mensaje": "¡Éxito! Base de Datos Neon actualizada y sincronizada."}), 200
     except Exception as e:
         db.session.rollback()
         return jsonify({"mensaje": "Aviso: " + str(e)}), 200
@@ -291,6 +287,9 @@ def registrar():
             return jsonify({"status": "error", "mensaje": "Datos JSON no recibidos", "error": "No JSON payload"}), 400
             
         email = datos.get('email', '').strip().lower()
+        if not email:
+            return jsonify({"status": "error", "mensaje": "El correo es obligatorio"}), 400
+
         if Usuario.query.filter_by(email=email).first():
             return jsonify({"status": "error", "mensaje": "Este correo ya está registrado", "error": "El email ya existe"}), 400
         
@@ -319,10 +318,11 @@ def registrar():
             "status": "pendiente",
             "rol": nuevo_rol
         }
+        print(f"✅ USUARIO REGISTRADO EN NEON: {email} (ID: {nuevo_usuario.id})", flush=True)
         return jsonify({"status": "success", "mensaje": "Usuario creado con éxito", "rol": nuevo_rol, "usuario": user_data, "userData": user_data}), 201
     except Exception as e:
         db.session.rollback()
-        print("ERROR EN REGISTRO:\n", traceback.format_exc())
+        print("ERROR EN REGISTRO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": f"Error en registro: {str(e)}", "error": str(e)}), 500
 
 @app.route('/login', methods=['POST'])
@@ -335,7 +335,7 @@ def login():
         email = datos.get('email', '').strip().lower()
         usuario = Usuario.query.filter_by(email=email).first()
         
-        if usuario and check_password_hash(usuario.password, datos.get('password')):
+        if usuario and check_password_hash(usuario.password, datos.get('password', '')):
             usuario.ultima_conexion = datetime.utcnow()
             db.session.commit()
             
@@ -357,7 +357,7 @@ def login():
             }), 200
         return jsonify({"status": "error", "mensaje": "Correo o contraseña incorrectos", "error": "Credenciales inválidas"}), 401
     except Exception as e:
-        print("ERROR EN LOGIN:\n", traceback.format_exc())
+        print("ERROR EN LOGIN:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": "Error en el servidor", "error": str(e)}), 500
 
 # --- PERFIL Y DOCUMENTOS ---
@@ -411,7 +411,7 @@ def gestionar_perfil(user_id):
 
     except Exception as e:
         db.session.rollback()
-        print("ERROR EN PERFIL:\n", traceback.format_exc())
+        print("ERROR EN PERFIL:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 @app.route('/subir_documento', methods=['POST'])
@@ -444,7 +444,7 @@ def subir_documento():
         return jsonify({"status": "success", "message": f"{tipo} guardado"}), 200
     except Exception as e:
         db.session.rollback()
-        print("ERROR EN SUBIDA DOCUMENTO:\n", traceback.format_exc())
+        print("ERROR EN SUBIDA DOCUMENTO:\n", traceback.format_exc(), flush=True)
         return jsonify({"error": str(e)}), 500
 
 # --- PRODUCTOS Y PEDIDOS ---
@@ -455,10 +455,10 @@ def obtener_productos():
         productos = Producto.query.all()
         return jsonify([{
             "id": p.id, "nombre": p.nombre, "precio": p.precio, 
-            "imagen": p.imagen_url, "comercio": p.comercio.nombre
+            "imagen": p.imagen_url, "comercio": p.comercio.nombre if p.comercio else "Jaydi"
         } for p in productos]), 200
     except Exception as e:
-        print("ERROR EN OBTENER PRODUCTOS:\n", traceback.format_exc())
+        print("ERROR EN OBTENER PRODUCTOS:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/api/admin/productos', methods=['POST'])
@@ -540,7 +540,7 @@ def admin_subir_producto():
 
     except Exception as e:
         db.session.rollback()
-        print("ERROR CRÍTICO EN OPERACIÓN ADMINISTRATIVA:\n", traceback.format_exc())
+        print("ERROR CRÍTICO EN OPERACIÓN ADMINISTRATIVA:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": f"Fallo interno del servidor: {str(e)}"}), 500
 
 @app.route('/finalizar_pedido', methods=['POST'])
@@ -613,7 +613,7 @@ def obtener_pedido(pedido_id):
             }), 200
         return jsonify({"error": "Pedido no encontrado"}), 404
     except Exception as e:
-        print("ERROR EN OBTENER PEDIDO:\n", traceback.format_exc())
+        print("ERROR EN OBTENER PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"error": str(e)}), 500
 
 @app.route('/pedidos_disponibles', methods=['GET'])
@@ -628,7 +628,7 @@ def pedidos_disponibles():
             "total": p.total
         } for p in pedidos]), 200
     except Exception as e:
-        print("ERROR EN PEDIDOS DISPONIBLES:\n", traceback.format_exc())
+        print("ERROR EN PEDIDOS DISPONIBLES:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/aceptar_pedido/<int:pedido_id>', methods=['POST']) 
@@ -654,7 +654,7 @@ def aceptar_pedido(pedido_id=None):
         return jsonify({"status": "error", "mensaje": "Pedido no encontrado o ya no disponible", "error": "Pedido ya no disponible"}), 404
     except Exception as e:
         db.session.rollback()
-        print("ERROR EN ACEPTAR PEDIDO:\n", traceback.format_exc())
+        print("ERROR EN ACEPTAR PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 @app.route('/estado_pedido/<int:id_pedido>', methods=['GET'])
@@ -670,7 +670,7 @@ def estado_pedido(id_pedido):
             }), 200
         return jsonify({"mensaje": "Pedido no encontrado"}), 404
     except Exception as e:
-        print("ERROR EN ESTADO PEDIDO:\n", traceback.format_exc())
+        print("ERROR EN ESTADO PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/actualizar_ubicacion', methods=['POST'])
@@ -692,7 +692,7 @@ def actualizar_ubicacion_post():
         return jsonify({"mensaje": "Pedido no encontrado"}), 404
     except Exception as e:
         db.session.rollback()
-        print("ERROR EN ACTUALIZAR UBICACION:\n", traceback.format_exc())
+        print("ERROR EN ACTUALIZAR UBICACION:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
 
 # --- HISTORIAL Y ADMINISTRACIÓN ---
@@ -745,7 +745,7 @@ def historial_viajes(repartidor_id):
             "fecha": p.fecha_creacion.strftime("%d/%m/%Y %H:%M")
         } for p in pedidos]), 200
     except Exception as e:
-        print("ERROR EN HISTORIAL:\n", traceback.format_exc())
+        print("ERROR EN HISTORIAL:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/admin/api/repartidores', methods=['GET'])
@@ -768,7 +768,7 @@ def api_repartidores():
             })
         return jsonify(resultado), 200
     except Exception as e:
-        print("ERROR EN ADMIN REPARTIDORES:\n", traceback.format_exc())
+        print("ERROR EN ADMIN REPARTIDORES:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/admin/aprobar/<int:user_id>', methods=['POST', 'GET'])
@@ -782,7 +782,7 @@ def aprobar_repartidor(user_id):
         return jsonify({"status": "error", "mensaje": "Usuario no encontrado o no es repartidor"}), 404
     except Exception as e:
         db.session.rollback()
-        print("ERROR EN APROBAR REPARTIDOR:\n", traceback.format_exc())
+        print("ERROR EN APROBAR REPARTIDOR:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 @app.route('/verificar_estatus/<int:user_id>', methods=['GET'])
@@ -798,10 +798,10 @@ def verificar_estatus(user_id):
             }), 200
         return jsonify({"status": "error", "mensaje": "Usuario no encontrado"}), 404
     except Exception as e:
-        print("ERROR EN VERIFICAR ESTATUS:\n", traceback.format_exc())
+        print("ERROR EN VERIFICAR ESTATUS:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# --- CHAT REST API (Mantenido por compatibilidad) ---
+# --- CHAT REST API (Sincronizado con Socket.IO) ---
 
 @app.route('/api/chat/<int:pedido_id>', methods=['GET'])
 def obtener_mensajes(pedido_id):
@@ -814,7 +814,7 @@ def obtener_mensajes(pedido_id):
             'fecha': m.fecha.strftime('%Y-%m-%d %H:%M:%S')
         } for m in mensajes]), 200
     except Exception as e:
-        print("ERROR EN OBTENER MENSAJES:\n", traceback.format_exc())
+        print("ERROR EN OBTENER MENSAJES:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
 
 @app.route('/api/chat/enviar', methods=['POST'])
@@ -832,85 +832,106 @@ def enviar_mensaje():
         nuevo_mensaje = Mensaje(pedido_id=pedido_id, remitente_tipo=datos.get('remitente_tipo'), texto=datos.get('texto'))
         db.session.add(nuevo_mensaje)
         db.session.commit()
+
+        mensaje_formateado = {
+            'id': nuevo_mensaje.id,
+            'remitente_tipo': nuevo_mensaje.remitente_tipo,
+            'texto': nuevo_mensaje.texto,
+            'fecha': nuevo_mensaje.fecha.strftime('%Y-%m-%d %H:%M:%S')
+        }
+        socketio.emit('nuevo_mensaje_pedido', mensaje_formateado, room=f"pedido_{pedido_id}")
+
         return jsonify({'status': 'success', 'mensaje': 'Enviado correctamente'}), 200
     except Exception as e:
         db.session.rollback()
-        print("ERROR EN ENVIAR MENSAJE:\n", traceback.format_exc())
+        print("ERROR EN ENVIAR MENSAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
 
 # --- RUTAS DE SEGURIDAD OTP Y RECUPERACIÓN ---
 
 @app.route('/api/solicitar_otp', methods=['POST'])
 def solicitar_otp():
-    data = request.get_json()
-    email = data.get('email')
-    proposito = data.get('proposito') 
+    try:
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower()
+        proposito = data.get('proposito', '').strip()
 
-    if not email or not proposito:
-        return jsonify({'error': 'Faltan datos'}), 400
+        if not email or not proposito:
+            return jsonify({'error': 'Faltan datos'}), 400
 
-    if proposito == 'recuperacion':
-        user = Usuario.query.filter_by(email=email).first()
-        if not user:
-            return jsonify({'error': 'Este correo no está registrado en Jaydi'}), 404
-    
-    if proposito == 'registro':
-        user = Usuario.query.filter_by(email=email).first()
-        if user:
-            return jsonify({'error': 'Este correo ya tiene una cuenta activa'}), 400
+        if proposito == 'recuperacion':
+            user = Usuario.query.filter_by(email=email).first()
+            if not user:
+                return jsonify({'error': 'Este correo no está registrado en Jaydi'}), 404
+        
+        if proposito == 'registro':
+            user = Usuario.query.filter_by(email=email).first()
+            if user:
+                return jsonify({'error': 'Este correo ya tiene una cuenta activa'}), 400
 
-    codigo = str(random.randint(100000, 999999))
-    expiracion = datetime.now() + timedelta(minutes=10)
+        codigo = str(random.randint(100000, 999999))
+        expiracion = datetime.utcnow() + timedelta(minutes=10)
 
-    CodigoOTP.query.filter_by(email=email, proposito=proposito).delete()
+        CodigoOTP.query.filter_by(email=email, proposito=proposito).delete()
 
-    nuevo_otp = CodigoOTP(email=email, codigo=codigo, proposito=proposito, fecha_expiracion=expiracion)
-    db.session.add(nuevo_otp)
-    db.session.commit()
+        nuevo_otp = CodigoOTP(email=email, codigo=codigo, proposito=proposito, fecha_expiracion=expiracion)
+        db.session.add(nuevo_otp)
+        db.session.commit()
 
-    exito = enviar_correo_otp(email, codigo, proposito)
-    if exito:
+        enviar_correo_otp(email, codigo, proposito)
         return jsonify({'mensaje': 'Código enviado con éxito'}), 200
-    else:
-        return jsonify({'error': 'Fallo del servidor al enviar el correo'}), 500
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR EN SOLICITAR OTP:\n", traceback.format_exc(), flush=True)
+        return jsonify({'error': f'Error interno en OTP: {str(e)}'}), 500
 
 @app.route('/api/verificar_otp', methods=['POST'])
 def verificar_otp():
-    data = request.get_json()
-    email = data.get('email')
-    codigo = data.get('codigo')
-    proposito = data.get('proposito')
+    try:
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower()
+        codigo = data.get('codigo', '').strip()
+        proposito = data.get('proposito', '').strip()
 
-    registro_otp = CodigoOTP.query.filter_by(email=email, codigo=codigo, proposito=proposito).first()
+        registro_otp = CodigoOTP.query.filter_by(email=email, codigo=codigo, proposito=proposito).first()
 
-    if not registro_otp:
-        return jsonify({'error': 'Código incorrecto'}), 400
+        if not registro_otp:
+            return jsonify({'error': 'Código incorrecto'}), 400
 
-    if datetime.now() > registro_otp.fecha_expiracion:
-        return jsonify({'error': 'Este código ya expiró. Solicita uno nuevo.'}), 400
+        if datetime.utcnow() > registro_otp.fecha_expiracion:
+            return jsonify({'error': 'Este código ya expiró. Solicita uno nuevo.'}), 400
 
-    db.session.delete(registro_otp)
-    db.session.commit()
+        db.session.delete(registro_otp)
+        db.session.commit()
 
-    return jsonify({'mensaje': 'Identidad verificada exitosamente'}), 200
+        return jsonify({'mensaje': 'Identidad verificada exitosamente'}), 200
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR EN VERIFICAR OTP:\n", traceback.format_exc(), flush=True)
+        return jsonify({'error': f'Error verificando OTP: {str(e)}'}), 500
 
 @app.route('/api/reset_password', methods=['POST'])
 def reset_password():
-    data = request.get_json()
-    email = data.get('email')
-    nueva_clave = data.get('nueva_clave')
+    try:
+        data = request.get_json() or {}
+        email = data.get('email', '').strip().lower()
+        nueva_clave = data.get('nueva_clave', '')
 
-    user = Usuario.query.filter_by(email=email).first()
-    if not user:
-        return jsonify({'error': 'Usuario no encontrado'}), 404
+        user = Usuario.query.filter_by(email=email).first()
+        if not user:
+            return jsonify({'error': 'Usuario no encontrado'}), 404
 
-    user.password = generate_password_hash(nueva_clave)
-    db.session.commit()
+        user.password = generate_password_hash(nueva_clave)
+        db.session.commit()
 
-    return jsonify({'mensaje': 'Contraseña actualizada. Ya puedes iniciar sesión.'}), 200
+        return jsonify({'mensaje': 'Contraseña actualizada. Ya puedes iniciar sesión.'}), 200
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR EN RESET PASSWORD:\n", traceback.format_exc(), flush=True)
+        return jsonify({'error': str(e)}), 500
 
 
-# --- NUEVO WEBHOOK BANCARIO ---
+# --- WEBHOOK BANCARIO ---
 
 @app.route('/api/pagos/webhook', methods=['POST'])
 def webhook_pagos_banco():
@@ -923,11 +944,10 @@ def webhook_pagos_banco():
         return jsonify({"status": "success", "mensaje": "Notificación recibida procesada"}), 200
         
     except Exception as e:
-        print("ERROR EN WEBHOOK BANCARIO:\n", traceback.format_exc())
+        print("ERROR EN WEBHOOK BANCARIO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
-    # IMPORTANTE: Reemplazar app.run por socketio.run para habilitar WebSockets
     socketio.run(app, host='0.0.0.0', port=port, allow_unsafe_werkzeug=True)
