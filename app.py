@@ -139,6 +139,12 @@ class Conductor(db.Model):
     seguro_key = db.Column(db.String(255), nullable=False)
     carnet_circulacion_key = db.Column(db.String(255), nullable=False)
     estado = db.Column(db.String(20), default='pending') 
+    
+    # NUEVOS CAMPOS: DATOS BANCARIOS DEL CONDUCTOR
+    banco_pago = db.Column(db.String(100), nullable=True)
+    cedula_pago = db.Column(db.String(50), nullable=True)
+    telefono_pago = db.Column(db.String(50), nullable=True)
+    
     created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Comercio(db.Model):
@@ -212,7 +218,10 @@ def sincronizar_columnas_bd():
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS longitud_actual FLOAT;",
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS latitud_destino FLOAT;",
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS longitud_destino FLOAT;",
-        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS datos_pago JSON;"
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS datos_pago JSON;",
+        "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS banco_pago VARCHAR(100);",
+        "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS cedula_pago VARCHAR(50);",
+        "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS telefono_pago VARCHAR(50);"
     ]
     for cmd in comandos_sql:
         try:
@@ -413,6 +422,38 @@ def registrar_conductor_s3():
         print("ERROR EN REGISTRO CONDUCTOR:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
+# --- NUEVO ENDPOINT: GUARDAR DATOS DE PAGO DEL CONDUCTOR ---
+@app.route('/api/drivers/payment_info', methods=['POST'])
+def guardar_datos_pago_conductor():
+    try:
+        datos = request.get_json()
+        if not datos:
+            return jsonify({"status": "error", "mensaje": "Sin datos JSON"}), 400
+            
+        user_id = datos.get('user_id')
+        banco = datos.get('banco')
+        cedula = datos.get('cedula')
+        telefono = datos.get('telefono')
+        
+        if not all([user_id, banco, cedula, telefono]):
+            return jsonify({"status": "error", "mensaje": "Faltan datos bancarios"}), 400
+            
+        conductor = Conductor.query.filter_by(user_id=user_id).first()
+        if not conductor:
+            return jsonify({"status": "error", "mensaje": "Conductor no encontrado"}), 404
+            
+        conductor.banco_pago = banco
+        conductor.cedula_pago = cedula
+        conductor.telefono_pago = telefono
+        db.session.commit()
+        
+        return jsonify({"status": "success", "mensaje": "Datos de pago actualizados en Neon"}), 200
+        
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR EN DATOS PAGO CONDUCTOR:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
 # --- PANEL ADMIN MAESTRO: CONTROL TOTAL DE CONDUCTORES (KYC, SUSPENSIÓN Y CHATS) ---
 
 @app.route('/api/admin/conductores', methods=['GET'])
@@ -437,6 +478,10 @@ def obtener_todos_conductores():
                 "direccion": c.direccion,
                 "estado": c.estado,
                 "viajes_completados": u.viajes_completados if u else 0,
+                # Datos de pago expuestos para el administrador
+                "banco_pago": c.banco_pago or "No registrado",
+                "cedula_pago": c.cedula_pago or "No registrado",
+                "telefono_pago": c.telefono_pago or "No registrado",
                 "documentos": {
                     "cert_medico": get_presigned_url(c.cert_medico_key),
                     "licencia": get_presigned_url(c.licencia_key),

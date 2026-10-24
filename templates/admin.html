@@ -19,6 +19,7 @@
         .chat-conductor { background-color: #d1e7dd; align-self: flex-end; border-bottom-right-radius: 0; }
         .chat-cliente { background-color: #f8d7da; align-self: flex-start; border-bottom-left-radius: 0; }
         .chat-container { display: flex; flex-direction: column; max-height: 250px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 8px; border: 1px solid #ddd;}
+        .pago-box { border-left: 4px solid #F07D00; background-color: #fffaf5; }
     </style>
 </head>
 <body>
@@ -153,7 +154,7 @@
                                 <!-- Columna Izquierda: Datos Estrictos -->
                                 <div class="col-md-4 bg-light p-3 border-end">
                                     <h5 class="fw-bold text-dark mb-3"><i class="bi bi-person-badge"></i> Datos del Registro</h5>
-                                    <table class="table table-sm table-bordered data-table mb-3">
+                                    <table class="table table-sm table-bordered data-table mb-2">
                                         <tbody>
                                             <tr><th>ID Sistema</th><td>#${c.user_id}</td></tr>
                                             <tr><th>Nombres</th><td>${c.nombres}</td></tr>
@@ -164,6 +165,15 @@
                                             ${estado === 'approved' ? `<tr><th>Carreras Exitosas</th><td class="text-success">${c.viajes_completados}</td></tr>` : ''}
                                         </tbody>
                                     </table>
+                                    
+                                    <!-- NUEVO: DATOS BANCARIOS DEL CONDUCTOR -->
+                                    <div class="p-2 mb-3 rounded pago-box shadow-sm border">
+                                        <h6 class="fw-bold text-dark mb-2" style="font-size: 0.8rem;"><i class="bi bi-bank"></i> Datos para Recibir Pagos</h6>
+                                        <div class="small text-secondary mb-1"><strong>Banco:</strong> ${c.banco_pago}</div>
+                                        <div class="small text-secondary mb-1"><strong>Cédula/RIF:</strong> ${c.cedula_pago}</div>
+                                        <div class="small text-secondary"><strong>Teléfono/N° Cuenta:</strong> <span class="text-dark fw-bold">${c.telefono_pago}</span></div>
+                                    </div>
+
                                     ${botonesHTML}
                                 </div>
                                 
