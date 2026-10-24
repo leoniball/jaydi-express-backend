@@ -357,7 +357,15 @@ def handle_send_message(data):
 @app.route('/api/drivers/register', methods=['POST'])
 def registrar_conductor_s3():
     try:
-        user_id = request.form.get('user_id')
+        user_id_raw = request.form.get('user_id')
+        
+        if not user_id_raw:
+            return jsonify({"status": "error", "mensaje": "Falta el ID de usuario"}), 400
+            
+        try:
+            user_id = int(user_id_raw)
+        except ValueError:
+            return jsonify({"status": "error", "mensaje": "El formato del ID de usuario es inválido"}), 400
         
         usuario = Usuario.query.get(user_id)
         if not usuario:
@@ -376,7 +384,7 @@ def registrar_conductor_s3():
             file_obj = request.files[doc]
             s3_key = upload_document_to_s3(file_obj, file_obj.filename)
             if not s3_key:
-                return jsonify({"status": "error", "mensaje": f"Error subiendo {doc} a la nube"}), 500
+                return jsonify({"status": "error", "mensaje": f"Error subiendo {doc} a la nube AWS S3"}), 500
             keys[doc] = s3_key
 
         nuevo_conductor = Conductor(
@@ -394,7 +402,9 @@ def registrar_conductor_s3():
             estado='pending'
         )
         db.session.add(nuevo_conductor)
+        
         usuario.rol = 'repartidor_s3' 
+        
         db.session.commit()
         return jsonify({"status": "success", "mensaje": "Solicitud de conductor enviada y documentos seguros en S3"}), 201
 
@@ -403,12 +413,20 @@ def registrar_conductor_s3():
         print("ERROR EN REGISTRO CONDUCTOR:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-@app.route('/api/admin/conductores_pendientes', methods=['GET'])
-def obtener_conductores_pendientes():
+# --- PANEL ADMIN MAESTRO: CONTROL TOTAL DE CONDUCTORES (KYC, SUSPENSIÓN Y CHATS) ---
+
+@app.route('/api/admin/conductores', methods=['GET'])
+def obtener_todos_conductores():
     try:
-        conductores = Conductor.query.filter_by(estado='pending').all()
+        estado = request.args.get('estado') 
+        if estado:
+            conductores = Conductor.query.filter_by(estado=estado).all()
+        else:
+            conductores = Conductor.query.all()
+        
         resultado = []
         for c in conductores:
+            u = Usuario.query.get(c.user_id)
             resultado.append({
                 "conductor_id": c.id,
                 "user_id": c.user_id,
@@ -417,6 +435,8 @@ def obtener_conductores_pendientes():
                 "cedula_texto": c.cedula_texto,
                 "telefono": c.telefono,
                 "direccion": c.direccion,
+                "estado": c.estado,
+                "viajes_completados": u.viajes_completados if u else 0,
                 "documentos": {
                     "cert_medico": get_presigned_url(c.cert_medico_key),
                     "licencia": get_presigned_url(c.licencia_key),
@@ -445,6 +465,51 @@ def aprobar_conductor_s3(conductor_id):
     except Exception as e:
         db.session.rollback()
         return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/suspender_conductor/<int:conductor_id>', methods=['POST'])
+def suspender_conductor(conductor_id):
+    try:
+        conductor = Conductor.query.get(conductor_id)
+        if not conductor: return jsonify({"error": "Conductor no encontrado"}), 404
+        
+        conductor.estado = 'suspended'
+        usuario = Usuario.query.get(conductor.user_id)
+        if usuario:
+            usuario.verificado = False
+        
+        db.session.commit()
+        return jsonify({"status": "success", "mensaje": "Conductor suspendido correctamente"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
+
+@app.route('/api/admin/conductor_chats/<int:user_id>', methods=['GET'])
+def obtener_chats_conductor(user_id):
+    try:
+        pedidos = Pedido.query.filter_by(repartidor_id=user_id).order_by(Pedido.fecha_creacion.desc()).all()
+        historial_completo = []
+        
+        for p in pedidos:
+            mensajes = Mensaje.query.filter_by(pedido_id=p.id).order_by(Mensaje.fecha.asc()).all()
+            
+            historial_completo.append({
+                "pedido_id": p.id,
+                "fecha": p.fecha_creacion.strftime('%Y-%m-%d %H:%M') if p.fecha_creacion else "Desconocida",
+                "cliente_id": p.id_usuario,
+                "destino": p.direccion_entrega,
+                "estado_carrera": p.estado,
+                "total_usd": p.total,
+                "hubo_chat": len(mensajes) > 0,
+                "mensajes": [{
+                    "remitente": m.remitente_tipo,
+                    "texto": m.texto,
+                    "hora": m.fecha.strftime('%H:%M:%S')
+                } for m in mensajes]
+            })
+            
+        return jsonify(historial_completo), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 # --- RUTAS DE NAVEGACIÓN Y ARCHIVOS ---
 
