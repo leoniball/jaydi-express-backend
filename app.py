@@ -140,7 +140,6 @@ class Conductor(db.Model):
     carnet_circulacion_key = db.Column(db.String(255), nullable=False)
     estado = db.Column(db.String(20), default='pending') 
     
-    # NUEVOS CAMPOS: DATOS BANCARIOS DEL CONDUCTOR
     banco_pago = db.Column(db.String(100), nullable=True)
     cedula_pago = db.Column(db.String(50), nullable=True)
     telefono_pago = db.Column(db.String(50), nullable=True)
@@ -156,6 +155,7 @@ class Comercio(db.Model):
     categoria = db.Column(db.String(50))
     productos = db.relationship('Producto', backref='comercio', lazy=True)
 
+# === CORRECCIÓN APLICADA: LA CLASE PRODUCTO ESTÁ AQUÍ ===
 class Producto(db.Model):
     __tablename__ = 'producto'
     id = db.Column(db.Integer, primary_key=True)
@@ -165,6 +165,7 @@ class Producto(db.Model):
     stock = db.Column(db.Integer, default=0)
     imagen_url = db.Column(db.String(500)) 
     comercio_id = db.Column(db.Integer, db.ForeignKey('comercio.id'), nullable=False)
+# ========================================================
 
 class Pedido(db.Model):
     __tablename__ = 'pedidos'
@@ -180,6 +181,7 @@ class Pedido(db.Model):
     latitud_destino = db.Column(db.Float, nullable=True)
     longitud_destino = db.Column(db.Float, nullable=True)
     datos_pago = db.Column(db.JSON, nullable=True) 
+    razon_cancelacion = db.Column(db.Text, nullable=True) # NUEVO: Registra por qué se canceló
 
 class Mensaje(db.Model):
     __tablename__ = 'mensajes'
@@ -219,6 +221,7 @@ def sincronizar_columnas_bd():
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS latitud_destino FLOAT;",
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS longitud_destino FLOAT;",
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS datos_pago JSON;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS razon_cancelacion TEXT;",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS banco_pago VARCHAR(100);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS cedula_pago VARCHAR(50);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS telefono_pago VARCHAR(50);"
@@ -422,7 +425,6 @@ def registrar_conductor_s3():
         print("ERROR EN REGISTRO CONDUCTOR:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# --- NUEVO ENDPOINT: GUARDAR DATOS DE PAGO DEL CONDUCTOR ---
 @app.route('/api/drivers/payment_info', methods=['POST'])
 def guardar_datos_pago_conductor():
     try:
@@ -453,7 +455,7 @@ def guardar_datos_pago_conductor():
         db.session.rollback()
         print("ERROR EN DATOS PAGO CONDUCTOR:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
-    # --- NUEVO ENDPOINT: LEER DATOS DE PAGO DEL CONDUCTOR ---
+
 @app.route('/api/drivers/payment_info/<int:user_id>', methods=['GET'])
 def obtener_datos_pago_conductor(user_id):
     try:
@@ -495,7 +497,6 @@ def obtener_todos_conductores():
                 "direccion": c.direccion,
                 "estado": c.estado,
                 "viajes_completados": u.viajes_completados if u else 0,
-                # Datos de pago expuestos para el administrador
                 "banco_pago": c.banco_pago or "No registrado",
                 "cedula_pago": c.cedula_pago or "No registrado",
                 "telefono_pago": c.telefono_pago or "No registrado",
@@ -562,6 +563,7 @@ def obtener_chats_conductor(user_id):
                 "estado_carrera": p.estado,
                 "total_usd": p.total,
                 "hubo_chat": len(mensajes) > 0,
+                "razon_cancelacion": p.razon_cancelacion or "",
                 "mensajes": [{
                     "remitente": m.remitente_tipo,
                     "texto": m.texto,
@@ -980,6 +982,10 @@ def solicitar_viaje_o_envio():
         lat_destino = float(datos.get('latitud_destino', 10.3495))
         lon_destino = float(datos.get('longitud_destino', -67.0401))
 
+        # NUEVO: Leer la fecha y hora si es un viaje programado
+        fecha_programada = datos.get('fecha_programada')
+        hora_programada = datos.get('hora_programada')
+
         info_extra = {
             "tipo_servicio": tipo_servicio,
             "origen": origen_texto,
@@ -989,14 +995,19 @@ def solicitar_viaje_o_envio():
             "monto_ves": float(datos.get('monto_ves', 0.0)),
             "distancia_km": str(datos.get('distancia_km', '0.0')),
             "duracion_min": int(datos.get('duracion_min', 5)),
-            "pasajero": datos.get('pasajero', 'Para mí')
+            "pasajero": datos.get('pasajero', 'Para mí'),
+            "fecha_programada": fecha_programada,
+            "hora_programada": hora_programada
         }
+
+        # Si viene con fecha y hora programada, el estado inicial será "agendado" en lugar de "pendiente"
+        estado_inicial = 'agendado' if (fecha_programada and hora_programada) else 'pendiente'
 
         nuevo_viaje = Pedido(
             id_usuario=usuario.id,
             direccion_entrega=f"[{tipo_servicio.upper()}] {origen_texto} -> {destino_texto}",
             total=total_usd,
-            estado='pendiente',
+            estado=estado_inicial,
             latitud_actual=lat_origen,
             longitud_actual=lon_origen,
             latitud_destino=lat_destino,
@@ -1006,22 +1017,24 @@ def solicitar_viaje_o_envio():
         db.session.add(nuevo_viaje)
         db.session.commit()
 
-        socketio.emit('nuevo_viaje_disponible', {
-            'id': nuevo_viaje.id,
-            'tipo_servicio': tipo_servicio,
-            'origen': origen_texto,
-            'destino': destino_texto,
-            'total_usd': total_usd,
-            'latitud_origen': lat_origen,
-            'longitud_origen': lon_origen,
-            'latitud_destino': lat_destino,
-            'longitud_destino': lon_destino
-        })
+        # Solo emitir al radar de conductores si es un viaje "ahora" (pendiente)
+        if estado_inicial == 'pendiente':
+            socketio.emit('nuevo_viaje_disponible', {
+                'id': nuevo_viaje.id,
+                'tipo_servicio': tipo_servicio,
+                'origen': origen_texto,
+                'destino': destino_texto,
+                'total_usd': total_usd,
+                'latitud_origen': lat_origen,
+                'longitud_origen': lon_origen,
+                'latitud_destino': lat_destino,
+                'longitud_destino': lon_destino
+            })
 
-        print(f"🚗 NUEVO {tipo_servicio.upper()} CREADO EN NEON -> ID #{nuevo_viaje.id} | Cliente ID: {usuario.id}", flush=True)
+        print(f"🚗 NUEVO {tipo_servicio.upper()} CREADO EN NEON -> ID #{nuevo_viaje.id} | Estado: {estado_inicial}", flush=True)
         return jsonify({
             "status": "success",
-            "mensaje": f"{tipo_servicio} registrado en Neon correctamente",
+            "mensaje": f"{tipo_servicio} registrado correctamente",
             "id": nuevo_viaje.id,
             "usuario_id": usuario.id
         }), 201
@@ -1057,6 +1070,9 @@ def obtener_mis_viajes_cliente(usuario_id):
                 "monto_ves": float(meta.get("monto_ves", 0.0)),
                 "estado": v.estado,
                 "fecha": v.fecha_creacion.strftime("%d/%m/%Y %H:%M") if v.fecha_creacion else "",
+                "fecha_programada": meta.get("fecha_programada", ""),
+                "hora_programada": meta.get("hora_programada", ""),
+                "razon_cancelacion": v.razon_cancelacion or "",
                 "latitud_origen": v.latitud_actual or 10.3444,
                 "longitud_origen": v.longitud_actual or -67.0433,
                 "latitud_destino": v.latitud_destino or 10.3495,
@@ -1065,6 +1081,38 @@ def obtener_mis_viajes_cliente(usuario_id):
         return jsonify(resultado), 200
     except Exception as e:
         print("ERROR EN OBTENER MIS VIAJES:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+# --- NUEVO ENDPOINT: CANCELAR VIAJE ---
+@app.route('/api/rides/cancelar', methods=['POST'])
+def cancelar_viaje():
+    try:
+        datos = request.get_json()
+        pedido_id = datos.get('pedido_id')
+        rol = datos.get('rol') # 'cliente' o 'conductor'
+        razon = datos.get('razon', 'Sin especificar')
+
+        pedido = Pedido.query.get(pedido_id)
+        if not pedido:
+            return jsonify({"status": "error", "mensaje": "Viaje no encontrado"}), 404
+
+        if rol == 'cliente':
+            # Si el cliente cancela, se marca como cancelado definitivamente
+            pedido.estado = 'cancelado'
+            pedido.razon_cancelacion = f"Cliente: {razon}"
+        
+        elif rol == 'conductor':
+            # Si el conductor cancela una carrera que aceptó, vuelve a "pendiente" para otro
+            pedido.estado = 'pendiente'
+            pedido.repartidor_id = None
+            pedido.razon_cancelacion = f"Conductor canceló: {razon}"
+            
+        db.session.commit()
+        return jsonify({"status": "success", "mensaje": "Viaje actualizado correctamente"}), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR CANCELANDO VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 @app.route('/api/rides/completar_viaje', methods=['POST'])
@@ -1117,7 +1165,8 @@ def obtener_pedido(pedido_id):
 @app.route('/api/delivery/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
     try:
-        pedidos = Pedido.query.filter(Pedido.estado.in_(['pendiente', 'listo_para_entrega'])).order_by(Pedido.fecha_creacion.desc()).all()
+        # Mostramos tanto pendientes (al instante) como los agendados que ya deban realizarse (lógica que puedes ampliar)
+        pedidos = Pedido.query.filter(Pedido.estado.in_(['pendiente', 'listo_para_entrega', 'agendado'])).order_by(Pedido.fecha_creacion.desc()).all()
         return jsonify([{
             "id": p.id, 
             "cliente": p.id_usuario, 
@@ -1149,7 +1198,7 @@ def aceptar_pedido(pedido_id=None):
             return jsonify({"status": "error", "error": "Cuenta de repartidor no verificada o inexistente"}), 403
 
         pedido = Pedido.query.get(id_ped)
-        if pedido and pedido.estado in ['pendiente', 'listo_para_entrega']:
+        if pedido and pedido.estado in ['pendiente', 'listo_para_entrega', 'agendado']:
             pedido.repartidor_id = repartidor_id
             pedido.estado = 'en camino'
             db.session.commit()
