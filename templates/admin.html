@@ -3,290 +3,218 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Jaydi Express | Panel Admin & Financiero</title>
+    <title>Panel Administrativo - Jaydi Drivers</title>
+    <!-- Bootstrap 5 CSS -->
     <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.11.0/font/bootstrap-icons.css">
-    <script src="https://cdn.jsdelivr.net/npm/sweetalert2@11"></script>
-    
+    <!-- Bootstrap Icons -->
+    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
     <style>
-        .navbar { background-color: #FF5722; }
-        .btn-approve { background-color: #4CAF50; color: white; border: none; }
-        .btn-approve:hover { background-color: #45a049; color: white; }
-        .btn-liberar { background-color: #1565C0; color: white; border: none; }
-        .btn-liberar:hover { background-color: #0d47a1; color: white; }
-        .table-container { background: white; border-radius: 15px; padding: 25px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
-        .doc-link { margin-bottom: 4px; font-size: 0.8rem; }
-        .badge-verificado { background-color: #4CAF50; padding: 8px 12px; border-radius: 5px; color: white; }
+        body { background-color: #f5f6fa; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
+        .navbar-custom { background: linear-gradient(90deg, #00337C 0%, #F07D00 100%); }
+        .card-driver { border: none; border-radius: 15px; box-shadow: 0 4px 15px rgba(0,0,0,0.05); margin-bottom: 20px; }
+        .doc-thumb { width: 100%; height: 120px; object-fit: cover; border-radius: 8px; cursor: pointer; transition: transform 0.2s; border: 1px solid #ddd; }
+        .doc-thumb:hover { transform: scale(1.05); box-shadow: 0 4px 8px rgba(0,0,0,0.2); }
+        .doc-label { font-size: 0.8rem; font-weight: bold; text-align: center; margin-top: 5px; color: #555; }
+        .btn-aprobar { background-color: #00337C; color: white; font-weight: bold; border-radius: 8px; }
+        .btn-aprobar:hover { background-color: #002255; color: white; }
     </style>
 </head>
-<body class="bg-light">
+<body>
 
-    <nav class="navbar navbar-dark shadow-sm mb-4">
+    <!-- Navbar -->
+    <nav class="navbar navbar-dark navbar-custom mb-4">
         <div class="container">
-            <a class="navbar-brand fw-bold" href="#">
-                <i class="bi bi-shield-lock-fill me-2"></i>JAYDI EXPRESS - ADMIN PANEL
+            <a class="navbar-brand" href="#">
+                <i class="bi bi-shield-check me-2"></i> Jaydi KYC Admin Panel
             </a>
-            <span class="navbar-text text-white small d-none d-md-inline">Control Operativo y Conciliación Financiera</span>
+            <span class="navbar-text text-white fw-bold">
+                Aprobación de Conductores
+            </span>
         </div>
     </nav>
 
     <div class="container">
-        <div class="row mb-4 text-center">
-            <div class="col-md-4 mb-3">
-                <div class="card border-0 shadow-sm py-3">
-                    <h6 class="text-muted">Total Repartidores</h6>
-                    <h2 id="count-total" class="fw-bold text-dark">0</h2>
-                </div>
-            </div>
-            <div class="col-md-4 mb-3">
-                <div class="card border-0 shadow-sm py-3 border-start border-warning border-5">
-                    <h6 class="text-muted">Documentos Pendientes</h6>
-                    <h2 id="count-pendientes" class="fw-bold text-warning">0</h2>
-                </div>
-            </div>
-            <div class="col-md-4 mb-3">
-                <div class="card border-0 shadow-sm py-3 border-start border-success border-5">
-                    <h6 class="text-muted">Saldo Total Red</h6>
-                    <h2 id="total-saldo" class="fw-bold text-success">$0.00</h2>
-                </div>
-            </div>
+        <div class="d-flex justify-content-between align-items-center mb-4">
+            <h2 class="h4" style="color: #00337C; font-weight: bold;">Solicitudes Pendientes</h2>
+            <button class="btn btn-outline-secondary btn-sm" onclick="cargarConductores()">
+                <i class="bi bi-arrow-clockwise"></i> Actualizar
+            </button>
         </div>
 
-        <div class="table-container shadow-sm mb-5 border-start border-primary border-5">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h4 class="m-0 fw-bold text-primary"><i class="bi bi-bank2 me-2"></i>Conciliación de Pagos (Por Verificar)</h4>
-            </div>
-
-            <div class="table-responsive">
-                <table class="table table-hover align-middle">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width: 10%">Pedido</th>
-                            <th style="width: 15%">Monto Original</th>
-                            <th style="width: 15%">Tasa BCV</th>
-                            <th style="width: 20%">Equivalente (VES)</th>
-                            <th style="width: 25%">Datos Reportados</th>
-                            <th style="width: 15%" class="text-center">Acción</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tabla-pagos">
-                        <tr><td colspan="6" class="text-center py-4 text-muted">Cargando pagos en espera...</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </div>
-
-        <div class="table-container shadow-sm">
-            <div class="d-flex justify-content-between align-items-center mb-4">
-                <h4 class="m-0 fw-bold text-secondary"><i class="bi bi-people-fill me-2"></i>Listado Maestro de Repartidores</h4>
-                <button class="btn btn-outline-primary btn-sm" onclick="actualizarTodo()">
-                    <i class="bi bi-arrow-clockwise"></i> Actualizar en Vivo
-                </button>
-            </div>
-
-            <div class="table-responsive">
-                <table class="table table-hover align-middle">
-                    <thead class="table-light">
-                        <tr>
-                            <th style="width: 5%">ID</th>
-                            <th style="width: 20%">Repartidor</th>
-                            <th style="width: 10%">Saldo</th>
-                            <th style="width: 15%">Última Conexión</th>
-                            <th style="width: 35%">Documentos de Identidad</th>
-                            <th style="width: 15%" class="text-center">Estado / Acción</th>
-                        </tr>
-                    </thead>
-                    <tbody id="tabla-repartidores">
-                    </tbody>
-                </table>
+        <!-- Contenedor donde se inyectarán las tarjetas de los conductores -->
+        <div id="conductores-container" class="row">
+            <div class="col-12 text-center mt-5" id="loading-spinner">
+                <div class="spinner-border text-primary" role="status">
+                    <span class="visually-hidden">Cargando...</span>
+                </div>
+                <p class="mt-2 text-muted">Buscando solicitudes en AWS S3...</p>
             </div>
         </div>
     </div>
 
+    <!-- Modal para ver imágenes en tamaño completo -->
+    <div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
+        <div class="modal-dialog modal-lg modal-dialog-centered">
+            <div class="modal-content">
+                <div class="modal-header">
+                    <h5 class="modal-title" id="modalImageTitle">Documento</h5>
+                    <button type="button" class="btn-close" data-bs-dismiss="modal" aria-label="Cerrar"></button>
+                </div>
+                <div class="modal-body text-center bg-dark">
+                    <img id="fullSizeImage" src="" alt="Documento Ampliado" class="img-fluid rounded" style="max-height: 70vh;">
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Bootstrap 5 JS Bundle -->
+    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
+    <!-- Lógica de la aplicación -->
     <script>
-        const SERVER_URL = 'https://jaydi-delivery-serverv.onrender.com';
-        let cantidadPagosPrevios = -1; // Para rastrear nuevos pagos y lanzar notificaciones
+        const imageModal = new bootstrap.Modal(document.getElementById('imageModal'));
 
-        // 1. CARGA DE PAGOS PENDIENTES
-        function cargarPagos() {
-            fetch(`${SERVER_URL}/admin/api/pagos_pendientes`)
-                .then(res => res.json())
-                .then(data => {
-                    // Lógica de Notificación de Nuevo Pago
-                    if (cantidadPagosPrevios !== -1 && data.length > cantidadPagosPrevios) {
-                        Swal.fire({
-                            toast: true, position: 'top-end', icon: 'info',
-                            title: '¡Nuevo pago reportado!', text: 'Revisa la tabla de conciliación.',
-                            showConfirmButton: false, timer: 4000
-                        });
-                    }
-                    cantidadPagosPrevios = data.length;
+        // Al cargar la página
+        document.addEventListener("DOMContentLoaded", () => {
+            cargarConductores();
+        });
 
-                    const tbody = document.getElementById('tabla-pagos');
-                    let rows = '';
+        // 1. Obtener la lista de conductores pendientes
+        async function cargarConductores() {
+            const container = document.getElementById('conductores-container');
+            container.innerHTML = `
+                <div class="col-12 text-center mt-5" id="loading-spinner">
+                    <div class="spinner-border" style="color: #F07D00;" role="status"></div>
+                    <p class="mt-2 text-muted">Consultando base de datos...</p>
+                </div>`;
 
-                    if (!data || data.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted"><i class="bi bi-check-circle fs-3 d-block mb-2 text-success"></i>No hay pagos pendientes por verificar.</td></tr>';
-                        return;
-                    }
+            try {
+                // Llama al endpoint de Flask que creamos
+                const response = await fetch('/api/admin/conductores_pendientes');
+                const data = await response.json();
 
-                    data.forEach(p => {
-                        // Procesamiento seguro del JSON
-                        let datosPago = p.datos_pago;
-                        if (typeof datosPago === 'string') {
-                            try { datosPago = JSON.parse(datosPago); } catch(e) { datosPago = {}; }
-                        }
-                        
-                        const tasa = datosPago.tasa_bcv || 0;
-                        const montoUSD = parseFloat(p.total || 0).toFixed(2);
-                        const montoVES = (montoUSD * tasa).toFixed(2);
-                        const metodo = datosPago.metodo || 'No especificado';
-                        const ref = datosPago.referencia || 'N/A';
+                container.innerHTML = ''; // Limpiar spinner
 
-                        rows += `
-                            <tr>
-                                <td><span class="fw-bold fs-5">#${p.id}</span></td>
-                                <td><span class="text-success fw-bold fs-5">$${montoUSD}</span></td>
-                                <td><span class="text-muted small">Bs. ${tasa}</span></td>
-                                <td><span class="fw-bold text-primary fs-5">Bs. ${montoVES}</span></td>
-                                <td>
-                                    <div class="fw-bold text-dark"><i class="bi bi-receipt"></i> ${metodo}</div>
-                                    <div class="text-secondary small">Ref: <span class="fw-bold text-dark">${ref}</span></div>
-                                </td>
-                                <td class="text-center">
-                                    <button class="btn btn-liberar btn-sm px-3 fw-bold shadow-sm" onclick="aprobarPago(${p.id})">
-                                        <i class="bi bi-check2-circle"></i> LIBERAR ORDEN
+                if (data.length === 0) {
+                    container.innerHTML = `
+                        <div class="col-12 text-center mt-5">
+                            <i class="bi bi-check-circle text-success" style="font-size: 3rem;"></i>
+                            <h4 class="mt-3">Todo al día</h4>
+                            <p class="text-muted">No hay conductores pendientes de aprobación.</p>
+                        </div>`;
+                    return;
+                }
+
+                // Generar tarjetas para cada conductor
+                data.forEach(conductor => {
+                    const card = document.createElement('div');
+                    card.className = 'col-12';
+                    card.innerHTML = `
+                        <div class="card card-driver p-4">
+                            <div class="row">
+                                <!-- Datos del conductor -->
+                                <div class="col-md-3 border-end">
+                                    <h5 class="text-primary fw-bold mb-1">${conductor.nombres} ${conductor.apellidos}</h5>
+                                    <p class="text-muted small mb-3">ID Usuario: #${conductor.user_id}</p>
+                                    
+                                    <p class="mb-1"><i class="bi bi-person-vcard text-secondary"></i> <strong>C.I:</strong> ${conductor.cedula_texto}</p>
+                                    <p class="mb-1"><i class="bi bi-telephone text-secondary"></i> <strong>Tel:</strong> ${conductor.telefono}</p>
+                                    <p class="mb-3"><i class="bi bi-geo-alt text-secondary"></i> <strong>Dir:</strong> ${conductor.direccion}</p>
+                                    
+                                    <button class="btn btn-aprobar w-100 mt-2 shadow-sm" onclick="aprobarConductor(${conductor.conductor_id}, this)">
+                                        <i class="bi bi-check2-circle"></i> Aprobar Conductor
                                     </button>
-                                </td>
-                            </tr>
-                        `;
-                    });
-                    tbody.innerHTML = rows;
-                })
-                .catch(err => console.error("Error cargando pagos:", err));
-        }
-
-        // 2. FUNCIÓN PARA APROBAR EL PAGO (LIBERAR ORDEN)
-        function aprobarPago(id) {
-            Swal.fire({
-                title: '¿Confirmar Liquidación?',
-                text: "Asegúrate de haber verificado la referencia en tu banco. Esta acción enviará la orden a los domiciliarios.",
-                icon: 'warning',
-                showCancelButton: true,
-                confirmButtonColor: '#1565C0',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'Sí, liberar orden',
-                cancelButtonText: 'Cancelar'
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    fetch(`${SERVER_URL}/admin/aprobar_pago/${id}`, { method: 'GET' })
-                        .then(res => res.json())
-                        .then(data => {
-                            Swal.fire('¡Aprobado!', 'La orden ya está disponible para la flota.', 'success');
-                            cargarPagos(); // Recarga la tabla
-                        })
-                        .catch(err => Swal.fire('Error', 'Hubo un problema de conexión con el servidor.', 'error'));
-                }
-            });
-        }
-
-        // 3. CARGA DE REPARTIDORES ORIGINAL (Optimizada con SweetAlert)
-        function cargarRepartidores() {
-            fetch(`${SERVER_URL}/admin/api/repartidores`)
-                .then(res => res.json())
-                .then(data => {
-                    const tbody = document.getElementById('tabla-repartidores');
-                    let rows = '';
-                    let pendientes = 0;
-                    let saldoTotal = 0;
-
-                    if (!data || data.length === 0) {
-                        tbody.innerHTML = '<tr><td colspan="6" class="text-center py-5 text-muted">No hay repartidores registrados.</td></tr>';
-                        return;
-                    }
-                    
-                    data.forEach(user => {
-                        if(!user.es_verificado) pendientes++;
-                        saldoTotal += parseFloat(user.saldo || 0);
-
-                        const fecha = user.ultima_conexion ? new Date(user.ultima_conexion).toLocaleString() : '---';
-                        const baseUrl = `${SERVER_URL}/uploads/documentos/user_${user.id}`;
-
-                        rows += `
-                            <tr>
-                                <td><span class="text-muted small">#${user.id}</span></td>
-                                <td>
-                                    <div class="fw-bold">${user.nombre}</div>
-                                    <div class="text-muted" style="font-size: 0.8rem;">${user.email}</div> 
-                                </td>
-                                <td><span class="text-success fw-bold">$${parseFloat(user.saldo || 0).toFixed(2)}</span></td>
-                                <td class="text-muted" style="font-size: 0.85rem;">${fecha}</td>
-                                <td>
-                                    <div class="d-flex flex-wrap gap-1">
-                                        <a href="${baseUrl}/cedula_frontal.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-person-badge"></i> Cédula</a>
-                                        <a href="${baseUrl}/selfie_cedula.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-camera"></i> Selfie</a>
-                                        <a href="${baseUrl}/licencia.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-card-heading"></i> Licencia</a>
-                                        <a href="${baseUrl}/certificado_medico.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-heart-pulse"></i> Médico</a>
-                                        <a href="${baseUrl}/titulo_circulacion.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-file-earmark-text"></i> Título</a>
-                                        <a href="${baseUrl}/seguro_rcv.jpg" target="_blank" class="btn btn-outline-secondary btn-sm doc-link"><i class="bi bi-shield-check"></i> RCV</a>
+                                </div>
+                                
+                                <!-- Documentos (Imágenes) -->
+                                <div class="col-md-9">
+                                    <h6 class="mb-3 text-secondary border-bottom pb-2">Documentos Adjuntos (AWS S3)</h6>
+                                    <div class="row text-center g-3">
+                                        <div class="col">
+                                            <img src="${conductor.documentos.cedula_img}" class="doc-thumb" onclick="verImagen(this.src, 'Cédula de Identidad')" onerror="manejarErrorImagen(this)">
+                                            <div class="doc-label">Cédula</div>
+                                        </div>
+                                        <div class="col">
+                                            <img src="${conductor.documentos.licencia}" class="doc-thumb" onclick="verImagen(this.src, 'Licencia de Conducir')" onerror="manejarErrorImagen(this)">
+                                            <div class="doc-label">Licencia</div>
+                                        </div>
+                                        <div class="col">
+                                            <img src="${conductor.documentos.cert_medico}" class="doc-thumb" onclick="verImagen(this.src, 'Certificado Médico')" onerror="manejarErrorImagen(this)">
+                                            <div class="doc-label">Cert. Médico</div>
+                                        </div>
+                                        <div class="col">
+                                            <img src="${conductor.documentos.carnet_circulacion}" class="doc-thumb" onclick="verImagen(this.src, 'Carnet de Circulación')" onerror="manejarErrorImagen(this)">
+                                            <div class="doc-label">Circulación</div>
+                                        </div>
+                                        <div class="col">
+                                            <img src="${conductor.documentos.seguro}" class="doc-thumb" onclick="verImagen(this.src, 'Seguro del Vehículo')" onerror="manejarErrorImagen(this)">
+                                            <div class="doc-label">Seguro</div>
+                                        </div>
                                     </div>
-                                </td>
-                                <td class="text-center">
-                                    ${user.es_verificado 
-                                        ? '<span class="badge badge-verificado"><i class="bi bi-check-circle-fill"></i> Verificado</span>' 
-                                        : `<button class="btn btn-approve btn-sm px-3 fw-bold shadow-sm" onclick="aprobar(${user.id})">APROBAR</button>`
-                                    }
-                                </td>
-                            </tr>`;
-                    });
-
-                    tbody.innerHTML = rows;
-                    document.getElementById('count-total').innerText = data.length;
-                    document.getElementById('count-pendientes').innerText = pendientes;
-                    document.getElementById('total-saldo').innerText = `$${saldoTotal.toFixed(2)}`;
-                })
-                .catch(err => {
-                    console.error("Error cargando repartidores:", err);
-                    document.getElementById('tabla-repartidores').innerHTML = '<tr><td colspan="6" class="text-center py-5 text-danger">Error conectando con el servidor.</td></tr>';
+                                </div>
+                            </div>
+                        </div>
+                    `;
+                    container.appendChild(card);
                 });
+
+            } catch (error) {
+                console.error("Error cargando conductores:", error);
+                container.innerHTML = `<div class="alert alert-danger">Error de conexión al cargar los datos.</div>`;
+            }
         }
 
-        // 4. FUNCIÓN APROBAR REPARTIDOR ORIGINAL (Optimizada con SweetAlert)
-        function aprobar(id) {
-            Swal.fire({
-                title: `¿Aprobar Repartidor #${id}?`,
-                text: "¿Has verificado la legitimidad de todos sus documentos?",
-                icon: 'question',
-                showCancelButton: true,
-                confirmButtonColor: '#4CAF50',
-                cancelButtonColor: '#d33',
-                confirmButtonText: 'Sí, aprobar',
-                cancelButtonText: 'Cancelar'
-            }).then((result) => {
-                if (result.isConfirmed) {
-                    fetch(`${SERVER_URL}/admin/aprobar/${id}`, { method: 'POST' })
-                        .then(res => {
-                            if(res.ok) {
-                                Swal.fire('¡Activado!', 'El repartidor ya puede recibir pedidos.', 'success');
-                                cargarRepartidores();
-                            } else {
-                                Swal.fire('Error', 'No se pudo aprobar en el servidor.', 'error');
-                            }
-                        })
-                        .catch(err => Swal.fire('Error', 'Fallo de conexión.', 'error'));
+        // 2. Función para aprobar al conductor
+        async function aprobarConductor(id, botonContexto) {
+            if(!confirm("¿Estás seguro de que todos los documentos son válidos y deseas aprobar a este conductor?")) return;
+
+            // Cambiar estado del botón mientras procesa
+            botonContexto.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Aprobando...';
+            botonContexto.disabled = true;
+
+            try {
+                const response = await fetch(`/api/admin/aprobar_conductor/${id}`, {
+                    method: 'POST'
+                });
+                const result = await response.json();
+
+                if(response.ok) {
+                    // Animación para desaparecer la tarjeta
+                    const tarjeta = botonContexto.closest('.card-driver');
+                    tarjeta.style.transition = "opacity 0.5s ease";
+                    tarjeta.style.opacity = "0";
+                    setTimeout(() => {
+                        tarjeta.remove();
+                        // Si ya no quedan tarjetas, recargar para mostrar el mensaje de vacío
+                        if(document.querySelectorAll('.card-driver').length === 0) {
+                            cargarConductores();
+                        }
+                    }, 500);
+                } else {
+                    alert("Error al aprobar: " + (result.mensaje || result.error));
+                    botonContexto.innerHTML = '<i class="bi bi-check2-circle"></i> Aprobar Conductor';
+                    botonContexto.disabled = false;
                 }
-            });
+            } catch (error) {
+                console.error("Error al aprobar:", error);
+                alert("Error de red. Inténtalo de nuevo.");
+                botonContexto.innerHTML = '<i class="bi bi-check2-circle"></i> Aprobar Conductor';
+                botonContexto.disabled = false;
+            }
         }
 
-        // Función integradora
-        function actualizarTodo() {
-            cargarPagos();
-            cargarRepartidores();
+        // 3. Funciones visuales para el modal de imágenes
+        function verImagen(url, titulo) {
+            document.getElementById('fullSizeImage').src = url;
+            document.getElementById('modalImageTitle').innerText = titulo;
+            imageModal.show();
         }
 
-        // Ejecución inicial y bucle cada 8 segundos para evitar saturar el servidor
-        actualizarTodo();
-        setInterval(actualizarTodo, 8000); 
+        function manejarErrorImagen(imgElement) {
+            // Si S3 devuelve error (ej. permisos o archivo corrupto), muestra un placeholder
+            imgElement.src = 'https://via.placeholder.com/150x120.png?text=No+disponible';
+            imgElement.style.cursor = 'default';
+            imgElement.onclick = null;
+        }
     </script>
 </body>
 </html>
