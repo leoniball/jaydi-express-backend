@@ -5,6 +5,9 @@ import urllib.request
 import traceback
 import smtplib
 import random
+import uuid
+import mimetypes
+import boto3
 from email.mime.text import MIMEText
 from email.mime.multipart import MIMEMultipart
 from flask import Flask, jsonify, request, render_template, send_from_directory
@@ -35,8 +38,6 @@ if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = DATABASE_URL
-# app.config['SQLALCHEMY_DATABASE_URI'] = 'sqlite:///jaydi_local.db'
-
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 
 # LA VACUNA ANTI-DESCONEXIÓN PARA EXPRESS Y DELIVERY
@@ -47,7 +48,7 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db = SQLAlchemy(app)
 
-# --- CONFIGURACIÓN DE SUBIDA DE ARCHIVOS ---
+# --- CONFIGURACIÓN DE SUBIDA DE ARCHIVOS (LOCAL/LEGACY) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads', 'documentos')
 app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB Límite
@@ -60,6 +61,45 @@ UPLOAD_FOLDER_PRODUCTOS = os.path.join(BASE_DIR, 'uploads', 'productos')
 if not os.path.exists(UPLOAD_FOLDER_PRODUCTOS):
     os.makedirs(UPLOAD_FOLDER_PRODUCTOS)
 
+# --- CONFIGURACIÓN AWS S3 (NUEVO ECOSISTEMA CONDUCTORES) ---
+BUCKET_NAME = 'jaydi-drivers-kyc'
+s3_client = boto3.client(
+    's3',
+    aws_access_key_id=os.environ.get('AWS_ACCESS_KEY_ID'),
+    aws_secret_access_key=os.environ.get('AWS_SECRET_ACCESS_KEY'),
+    region_name='us-east-2'
+)
+
+def upload_document_to_s3(file_obj, filename):
+    ext = filename.rsplit('.', 1)[1].lower() if '.' in filename else 'jpg'
+    unique_filename = f"{uuid.uuid4().hex}.{ext}"
+    content_type, _ = mimetypes.guess_type(filename)
+    if not content_type:
+        content_type = 'application/octet-stream'
+    try:
+        s3_client.upload_fileobj(
+            file_obj,
+            BUCKET_NAME,
+            unique_filename,
+            ExtraArgs={'ContentType': content_type}
+        )
+        return unique_filename
+    except Exception as e:
+        print(f"Error subiendo a S3: {e}", flush=True)
+        return None
+
+def get_presigned_url(object_key, expiration=3600):
+    if not object_key: return None
+    try:
+        url = s3_client.generate_presigned_url(
+            'get_object',
+            Params={'Bucket': BUCKET_NAME, 'Key': object_key},
+            ExpiresIn=expiration
+        )
+        return url
+    except Exception as e:
+        print(f"Error generando Presigned URL: {e}", flush=True)
+        return None
 
 # --- MODELOS DE DATOS ---
 
@@ -82,6 +122,24 @@ class Usuario(db.Model):
     latitud = db.Column(db.Float, nullable=True)
     longitud = db.Column(db.Float, nullable=True)
     ultima_conexion = db.Column(db.DateTime, default=datetime.utcnow)
+    perfil_conductor = db.relationship('Conductor', backref='usuario_relacion', uselist=False, lazy=True)
+
+class Conductor(db.Model):
+    __tablename__ = 'conductores'
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('usuario.id'), unique=True, nullable=False)
+    nombres = db.Column(db.String(100), nullable=False)
+    apellidos = db.Column(db.String(100), nullable=False)
+    cedula_texto = db.Column(db.String(20), unique=True, nullable=False)
+    telefono = db.Column(db.String(20), nullable=False)
+    direccion = db.Column(db.Text, nullable=False)
+    cert_medico_key = db.Column(db.String(255), nullable=False)
+    licencia_key = db.Column(db.String(255), nullable=False)
+    cedula_img_key = db.Column(db.String(255), nullable=False)
+    seguro_key = db.Column(db.String(255), nullable=False)
+    carnet_circulacion_key = db.Column(db.String(255), nullable=False)
+    estado = db.Column(db.String(20), default='pending') 
+    created_at = db.Column(db.DateTime, default=datetime.utcnow)
 
 class Comercio(db.Model):
     __tablename__ = 'comercio'
@@ -168,7 +226,7 @@ with app.app_context():
     sincronizar_columnas_bd()
     print("¡Base de Datos de Neon Sincronizada y Lista (Unificada)!", flush=True)
 
-# --- MOTOR DE ENVÍO DE CORREOS MULTICANAL (465 SSL / 587 TLS / 443 HTTPS) ---
+# --- MOTOR DE ENVÍO DE CORREOS MULTICANAL ---
 def enviar_correo_otp(destinatario, codigo, proposito):
     print(f"🔑 >>> [OTP JAYDI] Correo: {destinatario} | Código: {codigo} | Propósito: {proposito} <<<", flush=True)
 
@@ -184,7 +242,6 @@ def enviar_correo_otp(destinatario, codigo, proposito):
         asunto = "Recuperación de contraseña - Jaydi Express"
         cuerpo = f"Has solicitado recuperar tu contraseña.\n\nTu código de seguridad es: {codigo}\n\nSi no fuiste tú, ignora este mensaje."
 
-    # Canal 1: API HTTP Brevo (Puerto 443 - Si se configura BREVO_API_KEY)
     if brevo_key and remitente:
         try:
             payload = json.dumps({
@@ -206,7 +263,6 @@ def enviar_correo_otp(destinatario, codigo, proposito):
         except Exception as e_api:
             print(f"⚠️ Aviso API Brevo ({e_api}). Probando siguiente canal...", flush=True)
 
-    # Canal 2: Puente HTTPS Google Script (Puerto 443 - Si se configura GOOGLE_SCRIPT_URL)
     if url_script:
         try:
             payload = json.dumps({"destinatario": destinatario, "asunto": asunto, "cuerpo": cuerpo}).encode('utf-8')
@@ -230,7 +286,6 @@ def enviar_correo_otp(destinatario, codigo, proposito):
 
     contexto_ssl = ssl.create_default_context()
 
-    # Canal 3: Gmail SMTP_SSL por Puerto 465 (Evita el bloqueo de STARTTLS)
     try:
         with smtplib.SMTP_SSL('smtp.gmail.com', 465, timeout=10, context=contexto_ssl) as server:
             server.login(remitente, password)
@@ -240,7 +295,6 @@ def enviar_correo_otp(destinatario, codigo, proposito):
     except Exception as e_ssl:
         print(f"⚠️ Falló puerto 465 ({e_ssl}). Probando puerto 587...", flush=True)
 
-    # Canal 4: Gmail SMTP por Puerto 587 (STARTTLS tradicional)
     try:
         with smtplib.SMTP('smtp.gmail.com', 587, timeout=10) as server:
             server.ehlo()
@@ -298,6 +352,99 @@ def handle_send_message(data):
             db.session.rollback()
             print(f"Error al guardar o emitir mensaje vía socket: {e}", flush=True)
 
+# --- NUEVOS ENDPOINTS: REGISTRO Y VALIDACIÓN DE CONDUCTORES (S3) ---
+
+@app.route('/api/drivers/register', methods=['POST'])
+def registrar_conductor_s3():
+    try:
+        user_id = request.form.get('user_id')
+        
+        usuario = Usuario.query.get(user_id)
+        if not usuario:
+            return jsonify({"status": "error", "mensaje": "Usuario principal no encontrado"}), 404
+            
+        if Conductor.query.filter_by(user_id=user_id).first():
+            return jsonify({"status": "error", "mensaje": "Este usuario ya tiene una solicitud de conductor"}), 400
+
+        archivos_requeridos = ['cert_medico', 'licencia', 'cedula_img', 'seguro', 'carnet_circulacion']
+        for doc in archivos_requeridos:
+            if doc not in request.files or request.files[doc].filename == '':
+                return jsonify({"status": "error", "mensaje": f"Falta el documento: {doc}"}), 400
+
+        keys = {}
+        for doc in archivos_requeridos:
+            file_obj = request.files[doc]
+            s3_key = upload_document_to_s3(file_obj, file_obj.filename)
+            if not s3_key:
+                return jsonify({"status": "error", "mensaje": f"Error subiendo {doc} a la nube"}), 500
+            keys[doc] = s3_key
+
+        nuevo_conductor = Conductor(
+            user_id=user_id,
+            nombres=request.form.get('nombres'),
+            apellidos=request.form.get('apellidos'),
+            cedula_texto=request.form.get('cedula_texto'),
+            telefono=request.form.get('telefono'),
+            direccion=request.form.get('direccion'),
+            cert_medico_key=keys['cert_medico'],
+            licencia_key=keys['licencia'],
+            cedula_img_key=keys['cedula_img'],
+            seguro_key=keys['seguro'],
+            carnet_circulacion_key=keys['carnet_circulacion'],
+            estado='pending'
+        )
+        db.session.add(nuevo_conductor)
+        usuario.rol = 'repartidor_s3' 
+        db.session.commit()
+        return jsonify({"status": "success", "mensaje": "Solicitud de conductor enviada y documentos seguros en S3"}), 201
+
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR EN REGISTRO CONDUCTOR:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route('/api/admin/conductores_pendientes', methods=['GET'])
+def obtener_conductores_pendientes():
+    try:
+        conductores = Conductor.query.filter_by(estado='pending').all()
+        resultado = []
+        for c in conductores:
+            resultado.append({
+                "conductor_id": c.id,
+                "user_id": c.user_id,
+                "nombres": c.nombres,
+                "apellidos": c.apellidos,
+                "cedula_texto": c.cedula_texto,
+                "telefono": c.telefono,
+                "direccion": c.direccion,
+                "documentos": {
+                    "cert_medico": get_presigned_url(c.cert_medico_key),
+                    "licencia": get_presigned_url(c.licencia_key),
+                    "cedula_img": get_presigned_url(c.cedula_img_key),
+                    "seguro": get_presigned_url(c.seguro_key),
+                    "carnet_circulacion": get_presigned_url(c.carnet_circulacion_key)
+                }
+            })
+        return jsonify(resultado), 200
+    except Exception as e:
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route('/api/admin/aprobar_conductor/<int:conductor_id>', methods=['POST'])
+def aprobar_conductor_s3(conductor_id):
+    try:
+        conductor = Conductor.query.get(conductor_id)
+        if not conductor: return jsonify({"error": "Conductor no encontrado"}), 404
+        
+        conductor.estado = 'approved'
+        usuario = Usuario.query.get(conductor.user_id)
+        if usuario:
+            usuario.verificado = True
+        
+        db.session.commit()
+        return jsonify({"status": "success", "mensaje": "Conductor aprobado para recibir carreras"}), 200
+    except Exception as e:
+        db.session.rollback()
+        return jsonify({"error": str(e)}), 500
 
 # --- RUTAS DE NAVEGACIÓN Y ARCHIVOS ---
 
@@ -682,8 +829,6 @@ def solicitar_viaje_o_envio():
             except (ValueError, TypeError):
                 usuario = None
 
-        # Si el usuario prueba como Invitado o su ID local no existe tras limpiar Neon,
-        # usamos el primer usuario disponible o creamos uno de respaldo para no fallar por ForeignKey
         if not usuario:
             usuario = Usuario.query.first()
             if not usuario:
@@ -734,7 +879,6 @@ def solicitar_viaje_o_envio():
         db.session.add(nuevo_viaje)
         db.session.commit()
 
-        # Notificamos en tiempo real a los conductores conectados a Jaydi Drivers
         socketio.emit('nuevo_viaje_disponible', {
             'id': nuevo_viaje.id,
             'tipo_servicio': tipo_servicio,
