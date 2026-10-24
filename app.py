@@ -453,6 +453,23 @@ def guardar_datos_pago_conductor():
         db.session.rollback()
         print("ERROR EN DATOS PAGO CONDUCTOR:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
+    # --- NUEVO ENDPOINT: LEER DATOS DE PAGO DEL CONDUCTOR ---
+@app.route('/api/drivers/payment_info/<int:user_id>', methods=['GET'])
+def obtener_datos_pago_conductor(user_id):
+    try:
+        conductor = Conductor.query.filter_by(user_id=user_id).first()
+        if not conductor:
+            return jsonify({"status": "error", "mensaje": "Conductor no encontrado"}), 404
+        
+        return jsonify({
+            "status": "success",
+            "banco": conductor.banco_pago or "",
+            "cedula": conductor.cedula_pago or "",
+            "telefono": conductor.telefono_pago or ""
+        }), 200
+    except Exception as e:
+        print("ERROR GET DATOS PAGO:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 # --- PANEL ADMIN MAESTRO: CONTROL TOTAL DE CONDUCTORES (KYC, SUSPENSIÓN Y CHATS) ---
 
