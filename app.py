@@ -155,7 +155,6 @@ class Comercio(db.Model):
     categoria = db.Column(db.String(50))
     productos = db.relationship('Producto', backref='comercio', lazy=True)
 
-# === CORRECCIÓN APLICADA: LA CLASE PRODUCTO ESTÁ AQUÍ ===
 class Producto(db.Model):
     __tablename__ = 'producto'
     id = db.Column(db.Integer, primary_key=True)
@@ -165,7 +164,6 @@ class Producto(db.Model):
     stock = db.Column(db.Integer, default=0)
     imagen_url = db.Column(db.String(500)) 
     comercio_id = db.Column(db.Integer, db.ForeignKey('comercio.id'), nullable=False)
-# ========================================================
 
 class Pedido(db.Model):
     __tablename__ = 'pedidos'
@@ -181,7 +179,7 @@ class Pedido(db.Model):
     latitud_destino = db.Column(db.Float, nullable=True)
     longitud_destino = db.Column(db.Float, nullable=True)
     datos_pago = db.Column(db.JSON, nullable=True) 
-    razon_cancelacion = db.Column(db.Text, nullable=True) # NUEVO: Registra por qué se canceló
+    razon_cancelacion = db.Column(db.Text, nullable=True) 
 
 class Mensaje(db.Model):
     __tablename__ = 'mensajes'
@@ -473,7 +471,7 @@ def obtener_datos_pago_conductor(user_id):
         print("ERROR GET DATOS PAGO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# --- PANEL ADMIN MAESTRO: CONTROL TOTAL DE CONDUCTORES (KYC, SUSPENSIÓN Y CHATS) ---
+# --- PANEL ADMIN MAESTRO ---
 
 @app.route('/api/admin/conductores', methods=['GET'])
 def obtener_todos_conductores():
@@ -982,7 +980,6 @@ def solicitar_viaje_o_envio():
         lat_destino = float(datos.get('latitud_destino', 10.3495))
         lon_destino = float(datos.get('longitud_destino', -67.0401))
 
-        # NUEVO: Leer la fecha y hora si es un viaje programado
         fecha_programada = datos.get('fecha_programada')
         hora_programada = datos.get('hora_programada')
 
@@ -1000,7 +997,6 @@ def solicitar_viaje_o_envio():
             "hora_programada": hora_programada
         }
 
-        # Si viene con fecha y hora programada, el estado inicial será "agendado" en lugar de "pendiente"
         estado_inicial = 'agendado' if (fecha_programada and hora_programada) else 'pendiente'
 
         nuevo_viaje = Pedido(
@@ -1017,7 +1013,6 @@ def solicitar_viaje_o_envio():
         db.session.add(nuevo_viaje)
         db.session.commit()
 
-        # Solo emitir al radar de conductores si es un viaje "ahora" (pendiente)
         if estado_inicial == 'pendiente':
             socketio.emit('nuevo_viaje_disponible', {
                 'id': nuevo_viaje.id,
@@ -1044,6 +1039,7 @@ def solicitar_viaje_o_envio():
         print("ERROR EN SOLICITAR VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
+# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CLIENTE Y DEL REPARTIDOR PARA EL CHAT
 @app.route('/api/rides/mis_viajes/<int:usuario_id>', methods=['GET'])
 def obtener_mis_viajes_cliente(usuario_id):
     try:
@@ -1057,6 +1053,10 @@ def obtener_mis_viajes_cliente(usuario_id):
         resultado = []
         for v in viajes:
             meta = v.datos_pago if isinstance(v.datos_pago, dict) else {}
+            
+            cliente = Usuario.query.get(v.id_usuario)
+            repartidor = Usuario.query.get(v.repartidor_id) if v.repartidor_id else None
+            
             resultado.append({
                 "id": v.id,
                 "direccion_entrega": v.direccion_entrega,
@@ -1076,20 +1076,23 @@ def obtener_mis_viajes_cliente(usuario_id):
                 "latitud_origen": v.latitud_actual or 10.3444,
                 "longitud_origen": v.longitud_actual or -67.0433,
                 "latitud_destino": v.latitud_destino or 10.3495,
-                "longitud_destino": v.longitud_destino or -67.0401
+                "longitud_destino": v.longitud_destino or -67.0401,
+                
+                "cliente_nombre": cliente.nombre if cliente else "Cliente",
+                "usuario_nombre": cliente.nombre if cliente else "Cliente",
+                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor"
             })
         return jsonify(resultado), 200
     except Exception as e:
         print("ERROR EN OBTENER MIS VIAJES:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# --- NUEVO ENDPOINT: CANCELAR VIAJE ---
 @app.route('/api/rides/cancelar', methods=['POST'])
 def cancelar_viaje():
     try:
         datos = request.get_json()
         pedido_id = datos.get('pedido_id')
-        rol = datos.get('rol') # 'cliente' o 'conductor'
+        rol = datos.get('rol') 
         razon = datos.get('razon', 'Sin especificar')
 
         pedido = Pedido.query.get(pedido_id)
@@ -1097,19 +1100,15 @@ def cancelar_viaje():
             return jsonify({"status": "error", "mensaje": "Viaje no encontrado"}), 404
 
         if rol == 'cliente':
-            # Si el cliente cancela, se marca como cancelado definitivamente
             pedido.estado = 'cancelado'
             pedido.razon_cancelacion = f"Cliente: {razon}"
-        
         elif rol == 'conductor':
-            # Si el conductor cancela una carrera que aceptó, vuelve a "pendiente" para otro
             pedido.estado = 'pendiente'
             pedido.repartidor_id = None
             pedido.razon_cancelacion = f"Conductor canceló: {razon}"
             
         db.session.commit()
         return jsonify({"status": "success", "mensaje": "Viaje actualizado correctamente"}), 200
-
     except Exception as e:
         db.session.rollback()
         print("ERROR CANCELANDO VIAJE:\n", traceback.format_exc(), flush=True)
@@ -1140,11 +1139,15 @@ def completar_viaje_driver():
         print("ERROR EN COMPLETAR VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
+# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CLIENTE Y DEL REPARTIDOR PARA EL CHAT
 @app.route('/obtener_pedido/<int:pedido_id>', methods=['GET'])
 def obtener_pedido(pedido_id):
     try:
         pedido = Pedido.query.get(pedido_id)
         if pedido:
+            cliente = Usuario.query.get(pedido.id_usuario)
+            repartidor = Usuario.query.get(pedido.repartidor_id) if pedido.repartidor_id else None
+            
             return jsonify({
                 "id": pedido.id,
                 "direccion": pedido.direccion_entrega,
@@ -1154,31 +1157,43 @@ def obtener_pedido(pedido_id):
                 "longitud_actual": pedido.longitud_actual or -67.0433,
                 "latitud_destino": pedido.latitud_destino or 10.3495,
                 "longitud_destino": pedido.longitud_destino or -67.0401,
-                "datos_pago": pedido.datos_pago
+                "datos_pago": pedido.datos_pago,
+                
+                "usuario_nombre": cliente.nombre if cliente else "Cliente",
+                "cliente_nombre": cliente.nombre if cliente else "Cliente",
+                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor"
             }), 200
         return jsonify({"error": "Pedido no encontrado"}), 404
     except Exception as e:
         print("ERROR EN OBTENER PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"error": str(e)}), 500
 
+# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CLIENTE PARA EL RADAR DEL CONDUCTOR
 @app.route('/pedidos_disponibles', methods=['GET'])
 @app.route('/api/delivery/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
     try:
-        # Mostramos tanto pendientes (al instante) como los agendados que ya deban realizarse (lógica que puedes ampliar)
         pedidos = Pedido.query.filter(Pedido.estado.in_(['pendiente', 'listo_para_entrega', 'agendado'])).order_by(Pedido.fecha_creacion.desc()).all()
-        return jsonify([{
-            "id": p.id, 
-            "cliente": p.id_usuario, 
-            "direccion": p.direccion_entrega, 
-            "total": p.total,
-            "estado": p.estado,
-            "latitud_origen": p.latitud_actual or 10.3444,
-            "longitud_origen": p.longitud_actual or -67.0433,
-            "latitud_destino": p.latitud_destino or 10.3495,
-            "longitud_destino": p.longitud_destino or -67.0401,
-            "datos_pago": p.datos_pago
-        } for p in pedidos]), 200
+        resultado = []
+        
+        for p in pedidos:
+            cliente = Usuario.query.get(p.id_usuario)
+            resultado.append({
+                "id": p.id, 
+                "cliente": p.id_usuario, 
+                "direccion": p.direccion_entrega, 
+                "total": p.total,
+                "estado": p.estado,
+                "latitud_origen": p.latitud_actual or 10.3444,
+                "longitud_origen": p.longitud_actual or -67.0433,
+                "latitud_destino": p.latitud_destino or 10.3495,
+                "longitud_destino": p.longitud_destino or -67.0401,
+                "datos_pago": p.datos_pago,
+                
+                "usuario_nombre": cliente.nombre if cliente else "Cliente",
+                "cliente_nombre": cliente.nombre if cliente else "Cliente"
+            })
+        return jsonify(resultado), 200
     except Exception as e:
         print("ERROR EN PEDIDOS DISPONIBLES:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
@@ -1209,18 +1224,25 @@ def aceptar_pedido(pedido_id=None):
         print("ERROR EN ACEPTAR PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
+# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CONDUCTOR AL MAPA DE SEGUIMIENTO DEL CLIENTE
 @app.route('/estado_pedido/<int:id_pedido>', methods=['GET'])
 def estado_pedido(id_pedido):
     try:
         pedido = Pedido.query.get(id_pedido)
         if pedido:
+            cliente = Usuario.query.get(pedido.id_usuario)
+            repartidor = Usuario.query.get(pedido.repartidor_id) if pedido.repartidor_id else None
+            
             return jsonify({
                 "id": pedido.id,
                 "estado": pedido.estado,
                 "latitud_actual": pedido.latitud_actual or 10.3444,
                 "longitud_actual": pedido.longitud_actual or -67.0433,
                 "latitud_destino": pedido.latitud_destino or 10.3495,
-                "longitud_destino": pedido.longitud_destino or -67.0401
+                "longitud_destino": pedido.longitud_destino or -67.0401,
+                
+                "usuario_nombre": cliente.nombre if cliente else "Cliente",
+                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor"
             }), 200
         return jsonify({"mensaje": "Pedido no encontrado"}), 404
     except Exception as e:
