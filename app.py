@@ -948,7 +948,7 @@ def finalizar_pedido():
         print(traceback.format_exc(), flush=True)
         return jsonify({"mensaje": f"Error interno: {str(e)}"}), 500
 
-# --- RUTAS REALES PARA JAYDI RIDES (CON UBICACIÓN DE RECOGIDA Y DESTINO DEL CLIENTE) ---
+# --- RUTAS REALES PARA JAYDI RIDES (CON SEPARACIÓN ESTRICTA DE RADAR INMEDIATO VS AGENDADOS) ---
 
 @app.route('/api/rides/solicitar', methods=['POST'])
 def solicitar_viaje_o_envio():
@@ -980,7 +980,6 @@ def solicitar_viaje_o_envio():
         fecha_programada = datos.get('fecha_programada')
         hora_programada = datos.get('hora_programada')
 
-        # 👉 PRESERVAMOS LAS COORDENADAS EXACTAS DE DONDE HAY QUE BUSCAR AL CLIENTE Y SU DESTINO
         info_extra = {
             "tipo_servicio": tipo_servicio,
             "origen": origen_texto,
@@ -1042,7 +1041,6 @@ def solicitar_viaje_o_envio():
         print("ERROR EN SOLICITAR VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA LIMPIA: SOLO DEVUELVE VIAJES REALES EN CURSO/AGENDADOS (LOS CULMINADOS QUEDAN EN EL PANEL ADMIN)
 @app.route('/api/rides/mis_viajes/<int:usuario_id>', methods=['GET'])
 def obtener_mis_viajes_cliente(usuario_id):
     try:
@@ -1092,8 +1090,8 @@ def obtener_mis_viajes_cliente(usuario_id):
                 "monto_ves": float(meta.get("monto_ves", 0.0)),
                 "estado": v.estado,
                 "fecha": v.fecha_creacion.strftime("%d/%m/%Y %H:%M") if v.fecha_creacion else "",
-                "fecha_programada": meta.get("fecha_programada", ""),
-                "hora_programada": meta.get("hora_programada", ""),
+                "fecha_programada": meta.get("fecha_programada") or "",
+                "hora_programada": meta.get("hora_programada") or "",
                 "razon_cancelacion": v.razon_cancelacion or "",
                 "latitud_origen": float(meta.get("latitud_origen", v.latitud_actual or 10.3444)),
                 "longitud_origen": float(meta.get("longitud_origen", v.longitud_actual or -67.0433)),
@@ -1129,7 +1127,9 @@ def cancelar_viaje():
             pedido.estado = 'cancelado'
             pedido.razon_cancelacion = f"Cliente: {razon}"
         elif rol == 'conductor':
-            pedido.estado = 'pendiente'
+            meta = pedido.datos_pago if isinstance(pedido.datos_pago, dict) else {}
+            es_agendado = (pedido.estado == 'agendado') or bool(meta.get("fecha_programada"))
+            pedido.estado = 'agendado' if es_agendado else 'pendiente'
             pedido.repartidor_id = None
             pedido.razon_cancelacion = f"Conductor canceló: {razon}"
             
@@ -1367,19 +1367,36 @@ def obtener_pedido(pedido_id):
         print("ERROR EN OBTENER PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"error": str(e)}), 500
 
+# 👉 SEPARACIÓN ESTRICTA: RADAR INMEDIATO (tipo=inmediatos) VS AGENDADOS (tipo=agendados)
 @app.route('/pedidos_disponibles', methods=['GET'])
 @app.route('/api/delivery/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
     try:
-        pedidos = Pedido.query.filter(Pedido.estado.in_(['pendiente', 'listo_para_entrega', 'agendado'])).order_by(Pedido.fecha_creacion.desc()).all()
+        tipo = request.args.get('tipo', 'inmediatos').strip().lower()
+
+        if tipo == 'agendados':
+            pedidos = Pedido.query.filter(
+                Pedido.estado == 'agendado',
+                Pedido.repartidor_id.is_(None)
+            ).order_by(Pedido.fecha_creacion.desc()).all()
+        else:
+            pedidos = Pedido.query.filter(
+                Pedido.estado.in_(['pendiente', 'listo_para_entrega'])
+            ).order_by(Pedido.fecha_creacion.desc()).all()
+
         resultado = []
-        
         for p in pedidos:
             texto_dir = (p.direccion_entrega or "").lower()
             if "dirección no registrada" in texto_dir or "direccion no registrada" in texto_dir:
                 continue
 
             meta = p.datos_pago if isinstance(p.datos_pago, dict) else {}
+            fecha_prog = str(meta.get("fecha_programada") or "").strip()
+            hora_prog = str(meta.get("hora_programada") or "").strip()
+
+            if tipo != 'agendados' and fecha_prog:
+                continue
+
             cliente = Usuario.query.get(p.id_usuario)
             resultado.append({
                 "id": p.id, 
@@ -1389,6 +1406,8 @@ def pedidos_disponibles():
                 "destino": meta.get("destino", p.direccion_entrega),
                 "total": p.total,
                 "estado": p.estado,
+                "fecha_programada": fecha_prog,
+                "hora_programada": hora_prog,
                 "latitud_origen": float(meta.get("latitud_origen", p.latitud_actual or 10.3444)),
                 "longitud_origen": float(meta.get("longitud_origen", p.longitud_actual or -67.0433)),
                 "latitud_destino": p.latitud_destino or 10.3495,
@@ -1418,8 +1437,14 @@ def aceptar_pedido(pedido_id=None):
 
         pedido = Pedido.query.get(id_ped)
         if pedido and pedido.estado in ['pendiente', 'listo_para_entrega', 'agendado']:
+            if pedido.estado == 'agendado' and pedido.repartidor_id is not None:
+                return jsonify({"status": "error", "mensaje": "Este viaje agendado ya fue aceptado por otro conductor"}), 404
+
+            meta = pedido.datos_pago if isinstance(pedido.datos_pago, dict) else {}
+            es_agendado = (pedido.estado == 'agendado') or bool(meta.get("fecha_programada"))
+
             pedido.repartidor_id = repartidor_id
-            pedido.estado = 'en camino'
+            pedido.estado = 'agendado' if es_agendado else 'en camino'
             db.session.commit()
             return jsonify({"status": "success", "mensaje": "Pedido aceptado con éxito", "message": "¡Pedido aceptado!"}), 200
         return jsonify({"status": "error", "mensaje": "Pedido no encontrado o ya no disponible", "error": "Pedido ya no disponible"}), 404
@@ -1654,8 +1679,10 @@ def enviar_mensaje():
         pedido_id = datos.get('pedido_id')
         pedido = Pedido.query.get(pedido_id)
         if not pedido: return jsonify({'error': 'Pedido no encontrado'}), 404
-        if pedido.estado == 'pendiente': return jsonify({'error': 'El chat se activará cuando un conductor acepte el viaje.'}), 403
-        if pedido.estado == 'entregado': return jsonify({'error': 'El viaje ya fue culminado. Chat archivado.'}), 403
+        if pedido.estado == 'pendiente' or not pedido.repartidor_id:
+            return jsonify({'error': 'El chat se activará cuando un conductor acepte el viaje.'}), 403
+        if pedido.estado == 'entregado':
+            return jsonify({'error': 'El viaje ya fue culminado. Chat archivado.'}), 403
 
         nuevo_mensaje = Mensaje(pedido_id=pedido_id, remitente_tipo=datos.get('remitente_tipo'), texto=datos.get('texto'))
         db.session.add(nuevo_mensaje)
