@@ -180,7 +180,7 @@ class Pedido(db.Model):
     longitud_destino = db.Column(db.Float, nullable=True)
     datos_pago = db.Column(db.JSON, nullable=True) 
     razon_cancelacion = db.Column(db.Text, nullable=True)
-    # 👉 NUEVAS COLUMNAS PERMANENTES PARA VALORACIONES Y RESEÑAS
+    # 👉 COLUMNAS PERMANENTES PARA VALORACIONES Y RESEÑAS
     calificacion_conductor = db.Column(db.Integer, nullable=True)
     resena_conductor = db.Column(db.Text, nullable=True)
     calificacion_cliente = db.Column(db.Integer, nullable=True)
@@ -233,7 +233,10 @@ def sincronizar_columnas_bd():
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS notificado_conductor_fin BOOLEAN DEFAULT FALSE;",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS banco_pago VARCHAR(100);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS cedula_pago VARCHAR(50);",
-        "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS telefono_pago VARCHAR(50);"
+        "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS telefono_pago VARCHAR(50);",
+        # 👉 LIMPIEZA DEFINITIVA DE VIAJES DE EJEMPLO / DIRECCIÓN NO REGISTRADA EN NEON
+        "DELETE FROM mensajes WHERE pedido_id IN (SELECT id FROM pedidos WHERE direccion_entrega ILIKE '%Dirección no registrada%' OR direccion_entrega ILIKE '%Direccion no registrada%');",
+        "DELETE FROM pedidos WHERE direccion_entrega ILIKE '%Dirección no registrada%' OR direccion_entrega ILIKE '%Direccion no registrada%';"
     ]
     for cmd in comandos_sql:
         try:
@@ -245,7 +248,7 @@ def sincronizar_columnas_bd():
 with app.app_context():
     db.create_all()
     sincronizar_columnas_bd()
-    print("¡Base de Datos de Neon Sincronizada y Lista (Unificada)!", flush=True)
+    print("¡Base de Datos de Neon Sincronizada, Limpia de Ejemplos y Lista!", flush=True)
 
 # --- MOTOR DE ENVÍO DE CORREOS MULTICANAL ---
 def enviar_correo_otp(destinatario, codigo, proposito):
@@ -361,6 +364,7 @@ def handle_send_message(data):
 
             mensaje_formateado = {
                 'id': nuevo_mensaje.id,
+                'pedido_id': nuevo_mensaje.pedido_id,
                 'remitente_tipo': nuevo_mensaje.remitente_tipo,
                 'texto': nuevo_mensaje.texto,
                 'fecha': nuevo_mensaje.fecha.strftime('%Y-%m-%d %H:%M:%S')
@@ -373,7 +377,7 @@ def handle_send_message(data):
             db.session.rollback()
             print(f"Error al guardar o emitir mensaje vía socket: {e}", flush=True)
 
-# --- NUEVOS ENDPOINTS: REGISTRO Y VALIDACIÓN DE CONDUCTORES (S3) ---
+# --- ENDPOINTS: REGISTRO Y VALIDACIÓN DE CONDUCTORES (S3) ---
 
 @app.route('/api/drivers/register', methods=['POST'])
 def registrar_conductor_s3():
@@ -482,7 +486,7 @@ def obtener_datos_pago_conductor(user_id):
         print("ERROR GET DATOS PAGO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# --- PANEL ADMIN MAESTRO ---
+# --- PANEL ADMIN MAESTRO (GUARDA EL HISTORIAL COMPLETO Y CHATS DE TODOS LOS VIAJES CULMINADOS) ---
 
 @app.route('/api/admin/conductores', methods=['GET'])
 def obtener_todos_conductores():
@@ -563,11 +567,13 @@ def obtener_chats_conductor(user_id):
         
         for p in pedidos:
             mensajes = Mensaje.query.filter_by(pedido_id=p.id).order_by(Mensaje.fecha.asc()).all()
+            cli = Usuario.query.get(p.id_usuario)
             
             historial_completo.append({
                 "pedido_id": p.id,
                 "fecha": p.fecha_creacion.strftime('%Y-%m-%d %H:%M') if p.fecha_creacion else "Desconocida",
                 "cliente_id": p.id_usuario,
+                "cliente_nombre": cli.nombre if cli else "Cliente",
                 "destino": p.direccion_entrega,
                 "estado_carrera": p.estado,
                 "total_usd": p.total,
@@ -895,26 +901,12 @@ def finalizar_pedido():
             return jsonify({"mensaje": "Error: Cuerpo de la solicitud inválido"}), 400
 
         raw_uid = datos.get('usuario_id') or datos.get('id_usuario') or datos.get('id')
-        usuario_existe = None
-        if raw_uid:
-            try:
-                usuario_existe = Usuario.query.get(int(raw_uid))
-            except (ValueError, TypeError):
-                usuario_existe = None
+        if not raw_uid:
+            return jsonify({"mensaje": "Usuario no identificado"}), 400
 
+        usuario_existe = Usuario.query.get(int(raw_uid))
         if not usuario_existe:
-            usuario_existe = Usuario.query.first()
-            if not usuario_existe:
-                usuario_existe = Usuario(
-                    nombre="Cliente Jaydi",
-                    email="cliente@jaydi.com",
-                    password=generate_password_hash("jaydi123456"),
-                    sexo="Prefiero no decir",
-                    rol="cliente",
-                    verificado=True
-                )
-                db.session.add(usuario_existe)
-                db.session.commit()
+            return jsonify({"mensaje": "Usuario no existe en Neon"}), 404
 
         try:
             total_float = float(datos.get('total', 0.0))
@@ -956,7 +948,7 @@ def finalizar_pedido():
         print(traceback.format_exc(), flush=True)
         return jsonify({"mensaje": f"Error interno: {str(e)}"}), 500
 
-# --- NUEVAS RUTAS REALES PARA JAYDI RIDES (VIAJES, ENVÍOS E HISTORIAL EN NEON) ---
+# --- RUTAS REALES PARA JAYDI RIDES (SOLO VIAJES REALES, SIN EJEMPLOS) ---
 
 @app.route('/api/rides/solicitar', methods=['POST'])
 def solicitar_viaje_o_envio():
@@ -964,30 +956,20 @@ def solicitar_viaje_o_envio():
         datos = request.get_json() or {}
 
         raw_uid = datos.get('usuario_id')
-        usuario = None
-        if raw_uid:
-            try:
-                usuario = Usuario.query.get(int(raw_uid))
-            except (ValueError, TypeError):
-                usuario = None
+        if not raw_uid:
+            return jsonify({"status": "error", "mensaje": "ID de usuario requerido"}), 400
 
+        usuario = Usuario.query.get(int(raw_uid))
         if not usuario:
-            usuario = Usuario.query.first()
-            if not usuario:
-                usuario = Usuario(
-                    nombre="Cliente Jaydi",
-                    email="invitado@jaydi.com",
-                    password=generate_password_hash("jaydi123456"),
-                    sexo="Prefiero no decir",
-                    rol="cliente",
-                    verificado=True
-                )
-                db.session.add(usuario)
-                db.session.commit()
+            return jsonify({"status": "error", "mensaje": "Usuario no encontrado"}), 404
 
         tipo_servicio = datos.get('tipo_servicio', 'Viajes')
-        origen_texto = datos.get('origen', 'Los Teques')
-        destino_texto = datos.get('direccion_entrega', 'Los Teques, Centro')
+        origen_texto = str(datos.get('origen', 'Los Teques')).strip()
+        destino_texto = str(datos.get('direccion_entrega', '')).strip()
+
+        if not destino_texto or "dirección no registrada" in destino_texto.lower():
+            return jsonify({"status": "error", "mensaje": "Debes ingresar una dirección de destino real"}), 400
+
         total_usd = float(datos.get('total', 3.50))
 
         lat_origen = float(datos.get('latitud_origen', 10.3444))
@@ -1042,7 +1024,7 @@ def solicitar_viaje_o_envio():
                 'longitud_destino': lon_destino
             })
 
-        print(f"🚗 NUEVO {tipo_servicio.upper()} CREADO EN NEON -> ID #{nuevo_viaje.id} | Estado: {estado_inicial}", flush=True)
+        print(f"🚗 NUEVO {tipo_servicio.upper()} REAL CREADO EN NEON -> ID #{nuevo_viaje.id} | Estado: {estado_inicial}", flush=True)
         return jsonify({
             "status": "success",
             "mensaje": f"{tipo_servicio} registrado correctamente",
@@ -1055,21 +1037,39 @@ def solicitar_viaje_o_envio():
         print("ERROR EN SOLICITAR VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA MEJORADA: DEVUELVE TANTO LOS VIAJES COMO CLIENTE Y COMO CONDUCTOR + RESEÑAS PERMANENTES
+# 👉 RUTA LIMPIA: SOLO DEVUELVE VIAJES REALES EN CURSO/AGENDADOS (LOS CULMINADOS QUEDAN EN EL PANEL ADMIN)
 @app.route('/api/rides/mis_viajes/<int:usuario_id>', methods=['GET'])
 def obtener_mis_viajes_cliente(usuario_id):
     try:
-        if usuario_id > 0:
+        if usuario_id <= 0:
+            return jsonify([]), 200
+
+        rol = request.args.get('rol', '').strip().lower()
+
+        if rol == 'conductor':
             viajes = Pedido.query.filter(
-                or_(Pedido.id_usuario == usuario_id, Pedido.repartidor_id == usuario_id)
+                Pedido.repartidor_id == usuario_id,
+                Pedido.estado.in_(['aceptado', 'en camino', 'agendado'])
+            ).order_by(Pedido.fecha_creacion.desc()).all()
+        elif rol == 'cliente':
+            viajes = Pedido.query.filter(
+                Pedido.id_usuario == usuario_id,
+                Pedido.estado.in_(['pendiente', 'aceptado', 'en camino', 'agendado'])
             ).order_by(Pedido.fecha_creacion.desc()).all()
         else:
-            viajes = Pedido.query.order_by(Pedido.fecha_creacion.desc()).limit(15).all()
+            # Si no envía parámetro rol, devuelve únicamente los viajes activos o agendados de ese usuario real (sin viajes culminados ni de relleno)
+            viajes = Pedido.query.filter(
+                or_(Pedido.id_usuario == usuario_id, Pedido.repartidor_id == usuario_id),
+                Pedido.estado.in_(['pendiente', 'aceptado', 'en camino', 'agendado'])
+            ).order_by(Pedido.fecha_creacion.desc()).all()
 
         resultado = []
         for v in viajes:
+            texto_dir = (v.direccion_entrega or "").lower()
+            if "dirección no registrada" in texto_dir or "direccion no registrada" in texto_dir:
+                continue
+
             meta = v.datos_pago if isinstance(v.datos_pago, dict) else {}
-            
             cliente = Usuario.query.get(v.id_usuario)
             repartidor = Usuario.query.get(v.repartidor_id) if v.repartidor_id else None
             
@@ -1097,7 +1097,7 @@ def obtener_mis_viajes_cliente(usuario_id):
                 "longitud_destino": v.longitud_destino or -67.0401,
                 "cliente_nombre": cliente.nombre if cliente else "Cliente",
                 "usuario_nombre": cliente.nombre if cliente else "Cliente",
-                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor",
+                "repartidor_nombre": repartidor.nombre if repartidor else "Esperando conductor...",
                 "calificacion_conductor": v.calificacion_conductor,
                 "resena_conductor": v.resena_conductor or "",
                 "calificacion_cliente": v.calificacion_cliente,
@@ -1136,7 +1136,7 @@ def cancelar_viaje():
         print("ERROR CANCELANDO VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 NUEVA RUTA PARA CULMINAR VIAJE, GUARDAR VALORACIÓN/RESEÑA DEL CONDUCTOR Y NOTIFICARLE AL INSTANTE
+# 👉 RUTA PARA CULMINAR VIAJE, GUARDAR VALORACIÓN/RESEÑA DEL CONDUCTOR Y ENVIAR EL VIAJE AL HISTORIAL ADMIN
 @app.route('/api/rides/culminar', methods=['POST'])
 @app.route('/api/rides/completar_viaje', methods=['POST'])
 def completar_viaje_driver():
@@ -1163,7 +1163,6 @@ def completar_viaje_driver():
         if resena_conductor is not None and str(resena_conductor).strip() != "":
             pedido.resena_conductor = str(resena_conductor).strip()
 
-        # Marca que el conductor debe recibir la notificación de viaje culminado y modal de reseña al cliente
         pedido.notificado_conductor_fin = False
 
         id_cond = repartidor_id or pedido.repartidor_id
@@ -1192,7 +1191,7 @@ def completar_viaje_driver():
 
         return jsonify({
             "status": "success",
-            "mensaje": "Viaje culminado y reseña guardada para siempre en el historial",
+            "mensaje": "Viaje culminado y archivado en el Panel Administrativo",
             "destino": destino_limpio,
             "cliente_nombre": nombre_cliente
         }), 200
@@ -1201,7 +1200,7 @@ def completar_viaje_driver():
         print("ERROR EN COMPLETAR VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 NUEVA RUTA PARA QUE EL CONDUCTOR ACEPTE EL FIN DEL VIAJE Y DEJE SU RESEÑA OPCIONAL AL CLIENTE
+# 👉 RUTA PARA QUE EL CONDUCTOR ACEPTE EL FIN DEL VIAJE Y DEJE SU RESEÑA OPCIONAL AL CLIENTE
 @app.route('/api/rides/resena_cliente', methods=['POST'])
 def guardar_resena_al_cliente():
     try:
@@ -1235,11 +1234,10 @@ def guardar_resena_al_cliente():
         print("ERROR GUARDANDO RESEÑA CLIENTE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 NUEVA RUTA: OBTIENE PROMEDIO DE ESTRELLAS, HISTORIAL DE RESEÑAS E INFORMA VIAJES RECIÉN CULMINADOS AL CONDUCTOR
+# 👉 RUTA DE RESEÑAS PERMANENTES Y ALERTAS DE FIN DE VIAJE PARA EL CONDUCTOR
 @app.route('/api/rides/resenas_usuario/<int:usuario_id>', methods=['GET'])
 def obtener_resenas_y_alertas_usuario(usuario_id):
     try:
-        # 1. Reseñas recibidas como conductor
         viajes_como_conductor = Pedido.query.filter_by(repartidor_id=usuario_id, estado='entregado').order_by(Pedido.fecha_creacion.desc()).all()
         resenas_conductor = []
         suma_estrellas_cond = 0
@@ -1248,6 +1246,10 @@ def obtener_resenas_y_alertas_usuario(usuario_id):
         pendientes_aceptar_fin = []
 
         for p in viajes_como_conductor:
+            texto_dir = (p.direccion_entrega or "").lower()
+            if "dirección no registrada" in texto_dir or "direccion no registrada" in texto_dir:
+                continue
+
             meta = p.datos_pago if isinstance(p.datos_pago, dict) else {}
             destino_limpio = meta.get("destino", p.direccion_entrega)
             cli = Usuario.query.get(p.id_usuario)
@@ -1280,13 +1282,16 @@ def obtener_resenas_y_alertas_usuario(usuario_id):
 
         promedio_conductor = round(suma_estrellas_cond / conteo_estrellas_cond, 2) if conteo_estrellas_cond > 0 else 5.0
 
-        # 2. Reseñas recibidas como cliente
         viajes_como_cliente = Pedido.query.filter_by(id_usuario=usuario_id, estado='entregado').order_by(Pedido.fecha_creacion.desc()).all()
         resenas_cliente = []
         suma_estrellas_cli = 0
         conteo_estrellas_cli = 0
 
         for p in viajes_como_cliente:
+            texto_dir = (p.direccion_entrega or "").lower()
+            if "dirección no registrada" in texto_dir or "direccion no registrada" in texto_dir:
+                continue
+
             meta = p.datos_pago if isinstance(p.datos_pago, dict) else {}
             destino_limpio = meta.get("destino", p.direccion_entrega)
             cond = Usuario.query.get(p.repartidor_id) if p.repartidor_id else None
@@ -1322,7 +1327,6 @@ def obtener_resenas_y_alertas_usuario(usuario_id):
         print("ERROR EN OBTENER RESEÑAS USUARIO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CLIENTE Y DEL REPARTIDOR PARA EL CHAT + RESEÑAS
 @app.route('/obtener_pedido/<int:pedido_id>', methods=['GET'])
 def obtener_pedido(pedido_id):
     try:
@@ -1359,7 +1363,7 @@ def obtener_pedido(pedido_id):
         print("ERROR EN OBTENER PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"error": str(e)}), 500
 
-# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CLIENTE PARA EL RADAR DEL CONDUCTOR
+# 👉 RADAR DEL CONDUCTOR: SOLO MUESTRA CARRERAS REALES (FILTRA CUALQUIER VIAJE DE PRUEBA)
 @app.route('/pedidos_disponibles', methods=['GET'])
 @app.route('/api/delivery/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
@@ -1368,6 +1372,10 @@ def pedidos_disponibles():
         resultado = []
         
         for p in pedidos:
+            texto_dir = (p.direccion_entrega or "").lower()
+            if "dirección no registrada" in texto_dir or "direccion no registrada" in texto_dir:
+                continue
+
             cliente = Usuario.query.get(p.id_usuario)
             resultado.append({
                 "id": p.id, 
@@ -1414,7 +1422,6 @@ def aceptar_pedido(pedido_id=None):
         print("ERROR EN ACEPTAR PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CONDUCTOR Y ESTADO AL MAPA DE SEGUIMIENTO
 @app.route('/estado_pedido/<int:id_pedido>', methods=['GET'])
 def estado_pedido(id_pedido):
     try:
@@ -1594,14 +1601,35 @@ def verificar_estatus(user_id):
         print("ERROR EN VERIFICAR ESTATUS:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# --- CHAT REST API (Sincronizado con Socket.IO) ---
+# --- CHAT INTELIGENTE: RECUPERA EL HISTORIAL SOLO SI EL MISMO CONDUCTOR Y CLIENTE COINCIDEN ---
 
 @app.route('/api/chat/<int:pedido_id>', methods=['GET'])
 def obtener_mensajes(pedido_id):
     try:
-        mensajes = Mensaje.query.filter_by(pedido_id=pedido_id).order_by(Mensaje.fecha.asc()).all()
+        pedido_actual = Pedido.query.get(pedido_id)
+        if not pedido_actual:
+            return jsonify([]), 200
+
+        # Si el viaje ya fue culminado, cancelado o aún no tiene conductor asignado, no muestra chat en la app
+        if pedido_actual.estado in ['pendiente', 'entregado', 'cancelado'] or not pedido_actual.repartidor_id:
+            return jsonify([]), 200
+
+        # Si el conductor que aceptó la carrera ya le había hecho carreras antes a este mismo cliente,
+        # cargamos el historial de mensajes entre ambos. De lo contrario, solo los del viaje actual.
+        viajes_en_comun = Pedido.query.filter_by(
+            id_usuario=pedido_actual.id_usuario,
+            repartidor_id=pedido_actual.repartidor_id
+        ).all()
+
+        ids_comunes = [v.id for v in viajes_en_comun]
+
+        mensajes = Mensaje.query.filter(
+            Mensaje.pedido_id.in_(ids_comunes)
+        ).order_by(Mensaje.fecha.asc()).all()
+
         return jsonify([{
             'id': m.id,
+            'pedido_id': m.pedido_id,
             'remitente_tipo': m.remitente_tipo,
             'texto': m.texto,
             'fecha': m.fecha.strftime('%Y-%m-%d %H:%M:%S')
@@ -1619,8 +1647,8 @@ def enviar_mensaje():
         pedido_id = datos.get('pedido_id')
         pedido = Pedido.query.get(pedido_id)
         if not pedido: return jsonify({'error': 'Pedido no encontrado'}), 404
-        if pedido.estado == 'pendiente': return jsonify({'error': 'El chat se activará cuando un domiciliario acepte el pedido.'}), 403
-        if pedido.estado == 'entregado': return jsonify({'error': 'El pedido ya fue entregado. Chat cerrado.'}), 403
+        if pedido.estado == 'pendiente': return jsonify({'error': 'El chat se activará cuando un conductor acepte el viaje.'}), 403
+        if pedido.estado == 'entregado': return jsonify({'error': 'El viaje ya fue culminado. Chat archivado.'}), 403
 
         nuevo_mensaje = Mensaje(pedido_id=pedido_id, remitente_tipo=datos.get('remitente_tipo'), texto=datos.get('texto'))
         db.session.add(nuevo_mensaje)
@@ -1628,6 +1656,7 @@ def enviar_mensaje():
 
         mensaje_formateado = {
             'id': nuevo_mensaje.id,
+            'pedido_id': nuevo_mensaje.pedido_id,
             'remitente_tipo': nuevo_mensaje.remitente_tipo,
             'texto': nuevo_mensaje.texto,
             'fecha': nuevo_mensaje.fecha.strftime('%Y-%m-%d %H:%M:%S')

@@ -1,310 +1,664 @@
 <!DOCTYPE html>
 <html lang="es">
 <head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Panel Administrativo Maestro - Jaydi Drivers</title>
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/css/bootstrap.min.css" rel="stylesheet">
-    <link href="https://cdn.jsdelivr.net/npm/bootstrap-icons@1.10.5/font/bootstrap-icons.css" rel="stylesheet">
-    <style>
-        body { background-color: #f1f3f6; font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; }
-        .navbar-custom { background: linear-gradient(90deg, #031634 0%, #00337C 100%); }
-        .card-driver { border: none; border-radius: 12px; box-shadow: 0 4px 10px rgba(0,0,0,0.08); margin-bottom: 20px; background: #fff; }
-        .doc-thumb { width: 100%; height: 100px; object-fit: cover; border-radius: 6px; cursor: pointer; border: 1px solid #ddd; }
-        .doc-thumb:hover { opacity: 0.8; }
-        .doc-label { font-size: 0.75rem; font-weight: bold; text-align: center; margin-top: 4px; color: #444; }
-        .data-table th { background-color: #f8f9fa; width: 30%; font-size: 0.85rem;}
-        .data-table td { font-size: 0.9rem; font-weight: bold; color: #00337C; }
-        .chat-burbuja { padding: 8px 12px; border-radius: 15px; margin-bottom: 5px; max-width: 80%; font-size: 0.85rem; }
-        .chat-conductor { background-color: #d1e7dd; align-self: flex-end; border-bottom-right-radius: 0; }
-        .chat-cliente { background-color: #f8d7da; align-self: flex-start; border-bottom-left-radius: 0; }
-        .chat-container { display: flex; flex-direction: column; max-height: 250px; overflow-y: auto; background: #f8f9fa; padding: 10px; border-radius: 8px; border: 1px solid #ddd;}
-        .pago-box { border-left: 4px solid #F07D00; background-color: #fffaf5; }
-    </style>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Panel Administrativo Maestro - Jaydi</title>
+  <link href="https://fonts.googleapis.com/css2?family=Montserrat:wght@400;600;700;800&display=swap" rel="stylesheet" />
+  <style>
+    :root {
+      --azul: #00337C;
+      --naranja: #F07D00;
+      --gris-fondo: #F5F6FA;
+      --blanco: #FFFFFF;
+      --verde: #1B8A3D;
+      --rojo: #D32F2F;
+    }
+
+    * {
+      box-sizing: border-box;
+      margin: 0;
+      padding: 0;
+      font-family: 'Montserrat', sans-serif;
+    }
+
+    body {
+      background-color: var(--gris-fondo);
+      color: #222;
+      padding-bottom: 60px;
+    }
+
+    header {
+      background: linear-gradient(90deg, var(--azul), var(--naranja));
+      color: var(--blanco);
+      padding: 20px 30px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 15px;
+      box-shadow: 0 4px 14px rgba(0, 0, 0, 0.15);
+    }
+
+    header h1 {
+      font-size: 22px;
+      font-weight: 800;
+    }
+
+    .header-actions {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .btn {
+      border: none;
+      padding: 10px 16px;
+      border-radius: 10px;
+      font-weight: 700;
+      font-size: 12px;
+      cursor: pointer;
+      transition: 0.2s;
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      text-decoration: none;
+    }
+
+    .btn:hover {
+      opacity: 0.9;
+      transform: translateY(-1px);
+    }
+
+    .btn-azul { background: var(--azul); color: var(--blanco); }
+    .btn-naranja { background: var(--naranja); color: var(--blanco); }
+    .btn-verde { background: var(--verde); color: var(--blanco); }
+    .btn-rojo { background: var(--rojo); color: var(--blanco); }
+    .btn-blanco { background: var(--blanco); color: var(--azul); }
+
+    .container {
+      max-width: 1280px;
+      margin: 25px auto;
+      padding: 0 20px;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 10px;
+      margin-bottom: 22px;
+      flex-wrap: wrap;
+    }
+
+    .tab-btn {
+      background: var(--blanco);
+      color: var(--azul);
+      border: 2px solid transparent;
+      padding: 12px 20px;
+      border-radius: 12px;
+      font-weight: 700;
+      font-size: 13px;
+      cursor: pointer;
+      box-shadow: 0 2px 8px rgba(0,0,0,0.05);
+    }
+
+    .tab-btn.active {
+      background: var(--azul);
+      color: var(--blanco);
+    }
+
+    .section {
+      display: none;
+    }
+
+    .section.active {
+      display: block;
+    }
+
+    .card {
+      background: var(--blanco);
+      border-radius: 18px;
+      padding: 22px;
+      margin-bottom: 20px;
+      box-shadow: 0 4px 14px rgba(0,0,0,0.05);
+    }
+
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 12px;
+      margin-bottom: 16px;
+      border-bottom: 1px solid #EEE;
+      padding-bottom: 12px;
+    }
+
+    .card-title {
+      font-size: 18px;
+      font-weight: 800;
+      color: var(--azul);
+    }
+
+    .badge {
+      padding: 5px 10px;
+      border-radius: 20px;
+      font-size: 11px;
+      font-weight: 800;
+      text-transform: uppercase;
+    }
+
+    .badge-approved, .badge-entregado { background: #E8F5E9; color: var(--verde); }
+    .badge-pending, .badge-pendiente, .badge-en-camino { background: #FFF3E0; color: var(--naranja); }
+    .badge-suspended, .badge-cancelado { background: #FFEBEE; color: var(--rojo); }
+
+    .grid-conductores {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(360px, 1fr));
+      gap: 18px;
+    }
+
+    .driver-box {
+      border: 1px solid #E5E7EB;
+      border-radius: 16px;
+      padding: 18px;
+      background: #FAFAFC;
+      display: flex;
+      flex-direction: column;
+      justify-content: space-between;
+      gap: 12px;
+    }
+
+    .driver-info p {
+      font-size: 13px;
+      margin-bottom: 5px;
+      color: #444;
+    }
+
+    .driver-info strong {
+      color: var(--azul);
+    }
+
+    .docs-links {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 6px;
+      margin: 8px 0;
+    }
+
+    .doc-chip {
+      background: #EBF1FF;
+      color: var(--azul);
+      padding: 5px 10px;
+      border-radius: 8px;
+      font-size: 11px;
+      font-weight: 700;
+      text-decoration: none;
+    }
+
+    .doc-chip:hover {
+      background: var(--azul);
+      color: var(--blanco);
+    }
+
+    .driver-actions {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-top: 8px;
+    }
+
+    /* MODAL DE HISTORIAL, RESEÑAS Y CHATS */
+    .modal-overlay {
+      position: fixed;
+      inset: 0;
+      background: rgba(0, 0, 0, 0.65);
+      display: none;
+      justify-content: center;
+      align-items: center;
+      padding: 20px;
+      z-index: 9999;
+    }
+
+    .modal-overlay.open {
+      display: flex;
+    }
+
+    .modal-content {
+      background: var(--blanco);
+      width: 100%;
+      max-width: 920px;
+      max-height: 90vh;
+      border-radius: 20px;
+      display: flex;
+      flex-direction: column;
+      overflow: hidden;
+      box-shadow: 0 10px 30px rgba(0,0,0,0.3);
+    }
+
+    .modal-header {
+      background: var(--azul);
+      color: var(--blanco);
+      padding: 18px 24px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+    }
+
+    .modal-body {
+      padding: 20px 24px;
+      overflow-y: auto;
+      display: flex;
+      flex-direction: column;
+      gap: 16px;
+    }
+
+    .trip-item {
+      border: 1px solid #E0E4EC;
+      border-radius: 14px;
+      padding: 16px;
+      background: #FDFDFE;
+    }
+
+    .trip-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      flex-wrap: wrap;
+      gap: 8px;
+      margin-bottom: 10px;
+    }
+
+    .review-box {
+      background: #FFF8EE;
+      border-left: 4px solid var(--naranja);
+      padding: 10px 14px;
+      border-radius: 8px;
+      margin-top: 8px;
+      font-size: 13px;
+    }
+
+    .review-box.cliente-review {
+      background: #EEF4FF;
+      border-left-color: var(--azul);
+    }
+
+    .stars {
+      color: #F59E0B;
+      font-weight: 800;
+      letter-spacing: 1px;
+    }
+
+    .chat-box {
+      background: var(--gris-fondo);
+      border-radius: 10px;
+      padding: 12px;
+      margin-top: 10px;
+      max-height: 220px;
+      overflow-y: auto;
+    }
+
+    .chat-msg {
+      padding: 6px 10px;
+      border-radius: 8px;
+      margin-bottom: 6px;
+      font-size: 12px;
+    }
+
+    .chat-msg.cliente {
+      background: #E3F2FD;
+      color: #0D47A1;
+    }
+
+    .chat-msg.repartidor, .chat-msg.conductor {
+      background: #FFF3E0;
+      color: #E65100;
+    }
+
+    /* FORMULARIO PRODUCTOS */
+    .form-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+      margin-bottom: 16px;
+    }
+
+    .form-group {
+      display: flex;
+      flex-direction: column;
+      gap: 6px;
+    }
+
+    .form-group label {
+      font-size: 12px;
+      font-weight: 700;
+      color: var(--azul);
+    }
+
+    .form-group input, .form-group textarea {
+      padding: 10px 12px;
+      border: 1px solid #CCC;
+      border-radius: 10px;
+      font-size: 13px;
+    }
+
+    .empty-msg {
+      text-align: center;
+      padding: 30px;
+      color: #777;
+      font-weight: 600;
+    }
+  </style>
 </head>
 <body>
 
-    <nav class="navbar navbar-dark navbar-custom mb-4">
-        <div class="container">
-            <a class="navbar-brand fw-bold" href="#">
-                <i class="bi bi-speedometer me-2"></i> Jaydi KYC & Monitor
-            </a>
-        </div>
-    </nav>
+  <header>
+    <div>
+      <h1>Panel Administrativo Maestro • Jaydi</h1>
+      <p style="font-size: 12px; opacity: 0.9;">Control de Conductores, Historial Permanente de Viajes, Reseñas y Chats</p>
+    </div>
+    <div class="header-actions">
+      <button class="btn btn-blanco" onclick="sincronizarYLimpiarBD()">🔄 Sincronizar y Limpiar BD Neon</button>
+      <button class="btn btn-naranja" onclick="cargarTodo()">🔃 Recargar Panel</button>
+    </div>
+  </header>
 
-    <div class="container">
-        <!-- Pestañas de Navegación -->
-        <ul class="nav nav-tabs fw-bold mb-4" id="adminTabs" role="tablist">
-            <li class="nav-item" role="presentation">
-                <button class="nav-link active text-warning" id="pendientes-tab" data-bs-toggle="tab" data-bs-target="#pendientes" type="button" onclick="cargarConductores('pending', 'pendientes-container')">
-                    <i class="bi bi-hourglass-split"></i> Solicitudes Pendientes
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link text-success" id="activos-tab" data-bs-toggle="tab" data-bs-target="#activos" type="button" onclick="cargarConductores('approved', 'activos-container')">
-                    <i class="bi bi-check-circle-fill"></i> Conductores Activos
-                </button>
-            </li>
-            <li class="nav-item" role="presentation">
-                <button class="nav-link text-danger" id="suspendidos-tab" data-bs-toggle="tab" data-bs-target="#suspendidos" type="button" onclick="cargarConductores('suspended', 'suspendidos-container')">
-                    <i class="bi bi-slash-circle-fill"></i> Suspendidos
-                </button>
-            </li>
-        </ul>
-
-        <!-- Contenedores de las Pestañas -->
-        <div class="tab-content" id="myTabContent">
-            <!-- PENDIENTES -->
-            <div class="tab-pane fade show active" id="pendientes" role="tabpanel">
-                <div id="pendientes-container" class="row"></div>
-            </div>
-            
-            <!-- ACTIVOS -->
-            <div class="tab-pane fade" id="activos" role="tabpanel">
-                <div id="activos-container" class="row"></div>
-            </div>
-
-            <!-- SUSPENDIDOS -->
-            <div class="tab-pane fade" id="suspendidos" role="tabpanel">
-                <div id="suspendidos-container" class="row"></div>
-            </div>
-        </div>
+  <div class="container">
+    <div class="tabs">
+      <button class="tab-btn active" onclick="cambiarTab('conductores', this)">🚗 Conductores, Historial y Reseñas</button>
+      <button class="tab-btn" onclick="cambiarTab('pagos', this)">💳 Pagos por Verificar</button>
+      <button class="tab-btn" onclick="cambiarTab('productos', this)">🛍️ Subir Productos (Express)</button>
     </div>
 
-    <!-- Modal Visor de Imágenes -->
-    <div class="modal fade" id="imageModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-xl modal-dialog-centered">
-            <div class="modal-content bg-dark border-0">
-                <div class="modal-header border-0">
-                    <h5 class="modal-title text-white" id="modalImageTitle">Documento</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body text-center p-0">
-                    <img id="fullSizeImage" src="" class="img-fluid w-100" style="max-height: 85vh; object-fit: contain;">
-                </div>
-            </div>
+    <!-- SECCIÓN 1: CONDUCTORES + HISTORIAL DE CARRERAS + RESEÑAS + CHATS -->
+    <div id="sec-conductores" class="section active">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Conductores Registrados (KYC AWS S3)</span>
+          <div style="display: flex; gap: 8px; flex-wrap: wrap;">
+            <button class="btn btn-azul" onclick="cargarConductores('')">Todos</button>
+            <button class="btn btn-naranja" onclick="cargarConductores('pending')">Pendientes</button>
+            <button class="btn btn-verde" onclick="cargarConductores('approved')">Aprobados</button>
+            <button class="btn btn-rojo" onclick="cargarConductores('suspended')">Suspendidos</button>
+          </div>
         </div>
+        <div id="lista-conductores" class="grid-conductores">
+          <p class="empty-msg">Cargando conductores desde Neon...</p>
+        </div>
+      </div>
     </div>
 
-    <!-- Modal Historial y Chats -->
-    <div class="modal fade" id="historialModal" tabindex="-1" aria-hidden="true">
-        <div class="modal-dialog modal-lg modal-dialog-scrollable">
-            <div class="modal-content">
-                <div class="modal-header bg-primary text-white">
-                    <h5 class="modal-title fw-bold"><i class="bi bi-clock-history"></i> Historial y Mensajería del Conductor</h5>
-                    <button type="button" class="btn-close btn-close-white" data-bs-dismiss="modal"></button>
-                </div>
-                <div class="modal-body" id="historial-body">
-                    <!-- Contenido inyectado por JS -->
-                </div>
-            </div>
+    <!-- SECCIÓN 2: PAGOS PENDIENTES -->
+    <div id="sec-pagos" class="section">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Pagos Pendientes de Verificación</span>
+          <button class="btn btn-azul" onclick="cargarPagosPendientes()">Actualizar Lista</button>
         </div>
+        <div id="lista-pagos">
+          <p class="empty-msg">Cargando pagos pendientes...</p>
+        </div>
+      </div>
     </div>
 
-    <script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.0/dist/js/bootstrap.bundle.min.js"></script>
-    <script>
-        const imageModal = new bootstrap.Modal(document.getElementById('imageModal'));
-        const historialModal = new bootstrap.Modal(document.getElementById('historialModal'));
+    <!-- SECCIÓN 3: SUBIR PRODUCTOS EXPRESS -->
+    <div id="sec-productos" class="section">
+      <div class="card">
+        <div class="card-header">
+          <span class="card-title">Publicar Nuevo Artículo en Jaydi Express</span>
+        </div>
+        <form id="form-producto" onsubmit="subirProducto(event)">
+          <div class="form-grid">
+            <div class="form-group">
+              <label>Nombre del Producto *</label>
+              <input type="text" name="nombre" required placeholder="Ej: Champú Anticaspa 400ml" />
+            </div>
+            <div class="form-group">
+              <label>Precio (USD) *</label>
+              <input type="number" step="0.01" name="precio" required placeholder="Ej: 4.50" />
+            </div>
+            <div class="form-group">
+              <label>Stock Inicial</label>
+              <input type="number" name="stock" value="20" />
+            </div>
+            <div class="form-group">
+              <label>Imagen del Producto *</label>
+              <input type="file" name="imagen" accept="image/*" required />
+            </div>
+          </div>
+          <div class="form-group" style="margin-bottom: 16px;">
+            <label>Descripción</label>
+            <textarea name="descripcion" rows="2" placeholder="Detalles del producto..."></textarea>
+          </div>
+          <button type="submit" class="btn btn-azul">📤 Publicar Producto</button>
+        </form>
+      </div>
+    </div>
+  </div>
 
-        // Cargar pendientes al iniciar
-        document.addEventListener("DOMContentLoaded", () => cargarConductores('pending', 'pendientes-container'));
+  <!-- MODAL DE HISTORIAL DE VIAJES, RESEÑAS PERMANENTES Y CHATS DEL CONDUCTOR -->
+  <div id="modal-historial" class="modal-overlay">
+    <div class="modal-content">
+      <div class="modal-header">
+        <h3 id="modal-titulo">Historial de Carreras, Reseñas y Chats</h3>
+        <button class="btn btn-rojo" onclick="cerrarModalHistorial()">✕ Cerrar</button>
+      </div>
+      <div id="modal-cuerpo" class="modal-body">
+        <p class="empty-msg">Consultando historial en Neon...</p>
+      </div>
+    </div>
+  </div>
 
-        // CARGAR CONDUCTORES SEGÚN ESTADO
-        async function cargarConductores(estado, containerId) {
-            const container = document.getElementById(containerId);
-            container.innerHTML = `<div class="col-12 text-center mt-4"><div class="spinner-border text-primary"></div><p>Cargando datos...</p></div>`;
+  <script>
+    function cambiarTab(tabId, btn) {
+      document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
+      document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+      document.getElementById('sec-' + tabId).classList.add('active');
+      btn.classList.add('active');
+    }
 
-            try {
-                const response = await fetch(`/api/admin/conductores?estado=${estado}`);
-                const data = await response.json();
-                container.innerHTML = '';
+    async function sincronizarYLimpiarBD() {
+      try {
+        const res = await fetch('/actualizar_bd_perfil');
+        const data = await res.json();
+        alert(data.mensaje || 'Base de datos sincronizada y limpiada.');
+        cargarTodo();
+      } catch (e) {
+        alert('Error sincronizando BD: ' + e);
+      }
+    }
 
-                if (data.length === 0) {
-                    container.innerHTML = `<div class="col-12 text-center mt-5 text-muted"><h5>No hay registros en esta categoría.</h5></div>`;
-                    return;
-                }
+    function renderEstrellas(cantidad) {
+      if (!cantidad || cantidad < 1) return '';
+      const n = Math.min(5, Math.max(1, parseInt(cantidad)));
+      return '★'.repeat(n) + '☆'.repeat(5 - n) + ` (${n}/5)`;
+    }
 
-                data.forEach(c => {
-                    const card = document.createElement('div');
-                    card.className = 'col-12';
-                    
-                    // Render condicional de botones según estado
-                    let botonesHTML = '';
-                    if (estado === 'pending') {
-                        botonesHTML = `
-                            <button class="btn btn-success w-100 fw-bold mb-2" onclick="cambiarEstado(${c.conductor_id}, 'aprobar', this)"><i class="bi bi-check-lg"></i> Aprobar Conductor</button>
-                            <button class="btn btn-outline-danger w-100 fw-bold" onclick="cambiarEstado(${c.conductor_id}, 'suspender', this)"><i class="bi bi-x-lg"></i> Rechazar</button>
-                        `;
-                    } else if (estado === 'approved') {
-                        botonesHTML = `
-                            <button class="btn btn-primary w-100 fw-bold mb-2" onclick="verHistorialYChats(${c.user_id}, '${c.nombres} ${c.apellidos}')"><i class="bi bi-chat-left-text"></i> Ver Historial y Mensajería</button>
-                            <button class="btn btn-danger w-100 fw-bold" onclick="cambiarEstado(${c.conductor_id}, 'suspender', this)"><i class="bi bi-exclamation-triangle"></i> SUSPENDER ACCESO</button>
-                        `;
-                    } else if (estado === 'suspended') {
-                        botonesHTML = `
-                            <button class="btn btn-warning w-100 fw-bold mb-2 text-dark" onclick="cambiarEstado(${c.conductor_id}, 'aprobar', this)"><i class="bi bi-arrow-counterclockwise"></i> Reactivar Conductor</button>
-                            <button class="btn btn-secondary w-100 fw-bold" onclick="verHistorialYChats(${c.user_id}, '${c.nombres} ${c.apellidos}')"><i class="bi bi-search"></i> Revisar Historial</button>
-                        `;
-                    }
+    // 1. CARGAR CONDUCTORES
+    async function cargarConductores(estado = '') {
+      const contenedor = document.getElementById('lista-conductores');
+      contenedor.innerHTML = '<p class="empty-msg">Cargando conductores...</p>';
+      try {
+        const url = estado ? `/api/admin/conductores?estado=${estado}` : '/api/admin/conductores';
+        const res = await fetch(url);
+        const lista = await res.json();
 
-                    // Tarjeta Maestra
-                    card.innerHTML = `
-                        <div class="card card-driver p-0 overflow-hidden">
-                            <div class="row g-0">
-                                <!-- Columna Izquierda: Datos Estrictos -->
-                                <div class="col-md-4 bg-light p-3 border-end">
-                                    <h5 class="fw-bold text-dark mb-3"><i class="bi bi-person-badge"></i> Datos del Registro</h5>
-                                    <table class="table table-sm table-bordered data-table mb-2">
-                                        <tbody>
-                                            <tr><th>ID Sistema</th><td>#${c.user_id}</td></tr>
-                                            <tr><th>Nombres</th><td>${c.nombres}</td></tr>
-                                            <tr><th>Apellidos</th><td>${c.apellidos}</td></tr>
-                                            <tr><th>Cédula</th><td>${c.cedula_texto}</td></tr>
-                                            <tr><th>Teléfono</th><td>${c.telefono}</td></tr>
-                                            <tr><th>Dirección</th><td><small>${c.direccion}</small></td></tr>
-                                            ${estado === 'approved' ? `<tr><th>Carreras Exitosas</th><td class="text-success">${c.viajes_completados}</td></tr>` : ''}
-                                        </tbody>
-                                    </table>
-                                    
-                                    <!-- NUEVO: DATOS BANCARIOS DEL CONDUCTOR -->
-                                    <div class="p-2 mb-3 rounded pago-box shadow-sm border">
-                                        <h6 class="fw-bold text-dark mb-2" style="font-size: 0.8rem;"><i class="bi bi-bank"></i> Datos para Recibir Pagos</h6>
-                                        <div class="small text-secondary mb-1"><strong>Banco:</strong> ${c.banco_pago}</div>
-                                        <div class="small text-secondary mb-1"><strong>Cédula/RIF:</strong> ${c.cedula_pago}</div>
-                                        <div class="small text-secondary"><strong>Teléfono/N° Cuenta:</strong> <span class="text-dark fw-bold">${c.telefono_pago}</span></div>
-                                    </div>
-
-                                    ${botonesHTML}
-                                </div>
-                                
-                                <!-- Columna Derecha: Documentos Obligatorios -->
-                                <div class="col-md-8 p-3">
-                                    <h6 class="fw-bold text-secondary mb-3"><i class="bi bi-folder2-open"></i> Documentos Verificados (S3 AWS)</h6>
-                                    <div class="row g-2">
-                                        <div class="col-4 col-md-2">
-                                            <img src="${c.documentos.cedula_img}" class="doc-thumb" onclick="verImagen(this.src, 'Cédula de Identidad')">
-                                            <div class="doc-label">Cédula</div>
-                                        </div>
-                                        <div class="col-4 col-md-2">
-                                            <img src="${c.documentos.licencia}" class="doc-thumb" onclick="verImagen(this.src, 'Licencia de Conducir')">
-                                            <div class="doc-label">Licencia</div>
-                                        </div>
-                                        <div class="col-4 col-md-2">
-                                            <img src="${c.documentos.cert_medico}" class="doc-thumb" onclick="verImagen(this.src, 'Certificado Médico')">
-                                            <div class="doc-label">Cert. Médico</div>
-                                        </div>
-                                        <div class="col-4 col-md-2">
-                                            <img src="${c.documentos.carnet_circulacion}" class="doc-thumb" onclick="verImagen(this.src, 'Carnet de Circulación')">
-                                            <div class="doc-label">Circulación</div>
-                                        </div>
-                                        <div class="col-4 col-md-2">
-                                            <img src="${c.documentos.seguro}" class="doc-thumb" onclick="verImagen(this.src, 'Seguro Vehicular')">
-                                            <div class="doc-label">Seguro</div>
-                                        </div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    `;
-                    container.appendChild(card);
-                });
-            } catch (error) {
-                container.innerHTML = `<div class="alert alert-danger">Error de red: ${error.message}</div>`;
-            }
+        if (!Array.isArray(lista) || lista.length === 0) {
+          contenedor.innerHTML = '<p class="empty-msg">No hay conductores registrados en este filtro.</p>';
+          return;
         }
 
-        // CAMBIAR ESTADO (Aprobar o Suspender)
-        async function cambiarEstado(id, accion, boton) {
-            const esSuspension = accion === 'suspender';
-            if(esSuspension && !confirm("ALERTA: Vas a suspender el acceso de este conductor. Ya no podrá aceptar carreras. ¿Proceder?")) return;
-            if(!esSuspension && !confirm("¿Aprobar y autorizar a este conductor?")) return;
+        contenedor.innerHTML = lista.map(c => {
+          const docs = c.documentos || {};
+          return `
+            <div class="driver-box">
+              <div class="driver-info">
+                <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                  <strong style="font-size:15px;">${c.nombres} ${c.apellidos} (ID #${c.user_id})</strong>
+                  <span class="badge badge-${c.estado}">${c.estado}</span>
+                </div>
+                <p><strong>Cédula:</strong> ${c.cedula_texto} • <strong>Tel:</strong> ${c.telefono}</p>
+                <p><strong>Dirección:</strong> ${c.direccion}</p>
+                <p><strong>Viajes Culminados:</strong> ${c.viajes_completados}</p>
+                <p><strong>Pago Móvil:</strong> ${c.banco_pago} | CI: ${c.cedula_pago} | Tel: ${c.telefono_pago}</p>
+                <div class="docs-links">
+                  ${docs.cedula_img ? `<a class="doc-chip" href="${docs.cedula_img}" target="_blank">🪪 Cédula</a>` : ''}
+                  ${docs.licencia ? `<a class="doc-chip" href="${docs.licencia}" target="_blank">🪪 Licencia</a>` : ''}
+                  ${docs.cert_medico ? `<a class="doc-chip" href="${docs.cert_medico}" target="_blank">🩺 Cert. Médico</a>` : ''}
+                  ${docs.seguro ? `<a class="doc-chip" href="${docs.seguro}" target="_blank">🛡️ Seguro</a>` : ''}
+                  ${docs.carnet_circulacion ? `<a class="doc-chip" href="${docs.carnet_circulacion}" target="_blank">🚗 Carnet Circ.</a>` : ''}
+                </div>
+              </div>
+              <div class="driver-actions">
+                <button class="btn btn-verde" onclick="aprobarConductor(${c.conductor_id})">✓ Aprobar</button>
+                <button class="btn btn-rojo" onclick="suspenderConductor(${c.conductor_id})">✕ Suspender</button>
+                <button class="btn btn-azul" onclick="verHistorialConductor(${c.user_id}, '${c.nombres} ${c.apellidos}')">
+                  📜 Historial, Reseñas y Chats
+                </button>
+              </div>
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        contenedor.innerHTML = '<p class="empty-msg">Error al cargar conductores.</p>';
+      }
+    }
 
-            boton.disabled = true;
-            boton.innerHTML = '<span class="spinner-border spinner-border-sm"></span> Procesando...';
+    async function aprobarConductor(id) {
+      await fetch(`/api/admin/aprobar_conductor/${id}`, { method: 'POST' });
+      cargarConductores();
+    }
 
-            const endpoint = esSuspension ? `/api/admin/suspender_conductor/${id}` : `/api/admin/aprobar_conductor/${id}`;
+    async function suspenderConductor(id) {
+      await fetch(`/api/admin/suspender_conductor/${id}`, { method: 'POST' });
+      cargarConductores();
+    }
 
-            try {
-                const res = await fetch(endpoint, { method: 'POST' });
-                if(res.ok) {
-                    const tarjeta = boton.closest('.col-12');
-                    tarjeta.remove(); // Desaparece la tarjeta de la lista actual
-                } else {
-                    alert("Error en el servidor al ejecutar la orden.");
-                    boton.disabled = false;
-                }
-            } catch(e) {
-                alert("Error de conexión.");
-                boton.disabled = false;
-            }
+    // 2. VER HISTORIAL DE VIAJES CULMINADOS, RESEÑAS PERMANENTES Y CHATS
+    async function verHistorialConductor(userId, nombreConductor) {
+      const modal = document.getElementById('modal-historial');
+      const titulo = document.getElementById('modal-titulo');
+      const cuerpo = document.getElementById('modal-cuerpo');
+
+      titulo.textContent = `Historial Permanente y Auditoría: ${nombreConductor} (ID #${userId})`;
+      cuerpo.innerHTML = '<p class="empty-msg">Cargando carreras, valoraciones y chats desde Neon...</p>';
+      modal.classList.add('open');
+
+      try {
+        const res = await fetch(`/api/admin/conductor_chats/${userId}`);
+        const viajes = await res.json();
+
+        if (!Array.isArray(viajes) || viajes.length === 0) {
+          cuerpo.innerHTML = '<p class="empty-msg">Este conductor aún no tiene carreras registradas en el historial.</p>';
+          return;
         }
 
-        // VISUALIZAR HISTORIAL Y MENSAJERÍA
-        async function verHistorialYChats(userId, nombreConductor) {
-            const body = document.getElementById('historial-body');
-            body.innerHTML = '<div class="text-center p-4"><div class="spinner-border text-primary"></div><p>Buscando registros...</p></div>';
-            historialModal.show();
+        cuerpo.innerHTML = viajes.map(v => {
+          const nombreCli = v.cliente_nombre || `Cliente #${v.cliente_id}`;
+          const tieneResenaConductor = v.calificacion_conductor || (v.resena_conductor && v.resena_conductor.trim() !== '');
+          const tieneResenaCliente = v.calificacion_cliente || (v.resena_cliente && v.resena_cliente.trim() !== '');
+          const mensajesHtml = (v.mensajes && v.mensajes.length > 0)
+            ? `<div class="chat-box">
+                <strong style="font-size:11px; color:#555; display:block; margin-bottom:6px;">💬 Historial de Mensajes (${v.mensajes.length}):</strong>
+                ${v.mensajes.map(m => `
+                  <div class="chat-msg ${m.remitente}">
+                    <strong>[${m.hora}] ${m.remitente.toUpperCase()}:</strong> ${m.texto}
+                  </div>
+                `).join('')}
+               </div>`
+            : `<p style="font-size:11px; color:#888; margin-top:8px;">Sin mensajes de chat en esta carrera.</p>`;
 
-            try {
-                const res = await fetch(`/api/admin/conductor_chats/${userId}`);
-                const data = await res.json();
+          return `
+            <div class="trip-item">
+              <div class="trip-top">
+                <strong>Orden #${v.pedido_id} • Fecha: ${v.fecha} • Cliente: ${nombreCli}</strong>
+                <span class="badge badge-${(v.estado_carrera || '').replace(' ', '-')}">${v.estado_carrera} • $${Number(v.total_usd || 0).toFixed(2)}</span>
+              </div>
+              <p style="font-size:13px; margin-bottom:6px;"><strong>Ruta / Destino:</strong> ${v.destino}</p>
+              ${v.razon_cancelacion ? `<p style="font-size:12px; color:#D32F2F;"><strong>Motivo cancelación:</strong> ${v.razon_cancelacion}</p>` : ''}
 
-                if (data.length === 0) {
-                    body.innerHTML = `<div class="alert alert-secondary">El conductor <b>${nombreConductor}</b> no tiene viajes registrados en el historial.</div>`;
-                    return;
-                }
+              ${tieneResenaConductor ? `
+                <div class="review-box cliente-review">
+                  <strong>⭐ Valoración dejada por el cliente (${nombreCli}) al conductor:</strong>
+                  <span class="stars">${renderEstrellas(v.calificacion_conductor || 5)}</span>
+                  ${v.resena_conductor ? `<p style="margin-top:4px; font-style:italic;">"${v.resena_conductor}"</p>` : ''}
+                </div>
+              ` : ''}
 
-                let html = `<h6 class="fw-bold mb-3 text-primary">Registro de actividad de ${nombreConductor}</h6>`;
-                
-                data.forEach(viaje => {
-                    // Generar burbujas de chat si existen
-                    let chatHTML = '';
-                    if (viaje.hubo_chat) {
-                        chatHTML = '<div class="chat-container mt-2">';
-                        viaje.mensajes.forEach(m => {
-                            const esConductor = m.remitente === 'repartidor';
-                            const claseBurbuja = esConductor ? 'chat-conductor' : 'chat-cliente';
-                            const etiqueta = esConductor ? 'Conductor' : 'Cliente';
-                            chatHTML += `
-                                <div class="chat-burbuja ${claseBurbuja} border shadow-sm">
-                                    <strong>${etiqueta} (${m.hora}):</strong> ${m.texto}
-                                </div>
-                            `;
-                        });
-                        chatHTML += '</div>';
-                    } else {
-                        chatHTML = '<div class="text-muted small mt-2"><i class="bi bi-chat-slash"></i> Sin mensajes registrados en este viaje.</div>';
-                    }
+              ${tieneResenaCliente ? `
+                <div class="review-box">
+                  <strong>🚗 Valoración dejada por el conductor hacia ${nombreCli}:</strong>
+                  <span class="stars">${renderEstrellas(v.calificacion_cliente || 5)}</span>
+                  ${v.resena_cliente ? `<p style="margin-top:4px; font-style:italic;">"${v.resena_cliente}"</p>` : ''}
+                </div>
+              ` : ''}
 
-                    html += `
-                        <div class="card mb-3 border border-secondary shadow-sm">
-                            <div class="card-header bg-light d-flex justify-content-between align-items-center">
-                                <span class="fw-bold text-dark">Viaje #${viaje.pedido_id}</span>
-                                <span class="badge ${viaje.estado_carrera === 'entregado' ? 'bg-success' : 'bg-warning text-dark'}">${viaje.estado_carrera.toUpperCase()}</span>
-                            </div>
-                            <div class="card-body py-2">
-                                <p class="mb-1"><small><strong>Fecha:</strong> ${viaje.fecha}</small> | <small><strong>Tarifa:</strong> $${viaje.total_usd}</small></p>
-                                <p class="mb-2"><small><strong>Destino:</strong> ${viaje.destino}</small></p>
-                                <h6 class="fw-bold text-secondary mt-3 border-bottom pb-1" style="font-size:0.8rem;">Registro de Conversación</h6>
-                                ${chatHTML}
-                            </div>
-                        </div>
-                    `;
-                });
+              ${mensajesHtml}
+            </div>
+          `;
+        }).join('');
+      } catch (e) {
+        cuerpo.innerHTML = '<p class="empty-msg">Error cargando el historial del conductor.</p>';
+      }
+    }
 
-                body.innerHTML = html;
+    function cerrarModalHistorial() {
+      document.getElementById('modal-historial').classList.remove('open');
+    }
 
-            } catch(e) {
-                body.innerHTML = `<div class="alert alert-danger">No se pudo cargar el historial: ${e.message}</div>`;
-            }
+    // 3. PAGOS PENDIENTES
+    async function cargarPagosPendientes() {
+      const cont = document.getElementById('lista-pagos');
+      cont.innerHTML = '<p class="empty-msg">Consultando pagos...</p>';
+      try {
+        const res = await fetch('/admin/api/pagos_pendientes');
+        const lista = await res.json();
+        if (!Array.isArray(lista) || lista.length === 0) {
+          cont.innerHTML = '<p class="empty-msg">No hay pagos pendientes por aprobar.</p>';
+          return;
         }
+        cont.innerHTML = lista.map(p => `
+          <div class="trip-item" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:10px; margin-bottom:10px;">
+            <div>
+              <strong>Pedido #${p.id} • Total: $${Number(p.total).toFixed(2)}</strong>
+              <p style="font-size:12px; color:#555;">Datos de pago: ${JSON.stringify(p.datos_pago)}</p>
+            </div>
+            <button class="btn btn-verde" onclick="aprobarPago(${p.id})">✓ Aprobar Pago</button>
+          </div>
+        `).join('');
+      } catch (e) {
+        cont.innerHTML = '<p class="empty-msg">Error cargando pagos.</p>';
+      }
+    }
 
-        // VISOR DE DOCUMENTOS
-        function verImagen(url, titulo) {
-            document.getElementById('fullSizeImage').src = url;
-            document.getElementById('modalImageTitle').innerText = titulo;
-            imageModal.show();
-        }
-    </script>
+    async function aprobarPago(id) {
+      await fetch(`/admin/aprobar_pago/${id}`);
+      cargarPagosPendientes();
+    }
+
+    // 4. SUBIR PRODUCTO
+    async function subirProducto(e) {
+      e.preventDefault();
+      const form = document.getElementById('form-producto');
+      const formData = new FormData(form);
+      try {
+        const res = await fetch('/api/admin/productos', {
+          method: 'POST',
+          body: formData
+        });
+        const data = await res.json();
+        alert(data.mensaje || 'Producto procesado');
+        if (res.ok) form.reset();
+      } catch (err) {
+        alert('Error subiendo producto: ' + err);
+      }
+    }
+
+    function cargarTodo() {
+      cargarConductores();
+      cargarPagosPendientes();
+    }
+
+    window.onload = cargarTodo;
+  </script>
 </body>
 </html>
