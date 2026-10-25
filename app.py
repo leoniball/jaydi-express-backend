@@ -15,7 +15,7 @@ from flask_sqlalchemy import SQLAlchemy
 from flask_cors import CORS
 from werkzeug.security import generate_password_hash, check_password_hash
 from datetime import datetime, timedelta
-from sqlalchemy import text 
+from sqlalchemy import text, or_
 from werkzeug.utils import secure_filename
 
 # --- IMPORTAR SOCKET.IO ---
@@ -179,7 +179,13 @@ class Pedido(db.Model):
     latitud_destino = db.Column(db.Float, nullable=True)
     longitud_destino = db.Column(db.Float, nullable=True)
     datos_pago = db.Column(db.JSON, nullable=True) 
-    razon_cancelacion = db.Column(db.Text, nullable=True) 
+    razon_cancelacion = db.Column(db.Text, nullable=True)
+    # 👉 NUEVAS COLUMNAS PERMANENTES PARA VALORACIONES Y RESEÑAS
+    calificacion_conductor = db.Column(db.Integer, nullable=True)
+    resena_conductor = db.Column(db.Text, nullable=True)
+    calificacion_cliente = db.Column(db.Integer, nullable=True)
+    resena_cliente = db.Column(db.Text, nullable=True)
+    notificado_conductor_fin = db.Column(db.Boolean, default=False)
 
 class Mensaje(db.Model):
     __tablename__ = 'mensajes'
@@ -220,6 +226,11 @@ def sincronizar_columnas_bd():
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS longitud_destino FLOAT;",
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS datos_pago JSON;",
         "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS razon_cancelacion TEXT;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS calificacion_conductor INTEGER;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS resena_conductor TEXT;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS calificacion_cliente INTEGER;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS resena_cliente TEXT;",
+        "ALTER TABLE pedidos ADD COLUMN IF NOT EXISTS notificado_conductor_fin BOOLEAN DEFAULT FALSE;",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS banco_pago VARCHAR(100);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS cedula_pago VARCHAR(50);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS telefono_pago VARCHAR(50);"
@@ -562,6 +573,10 @@ def obtener_chats_conductor(user_id):
                 "total_usd": p.total,
                 "hubo_chat": len(mensajes) > 0,
                 "razon_cancelacion": p.razon_cancelacion or "",
+                "calificacion_conductor": p.calificacion_conductor,
+                "resena_conductor": p.resena_conductor or "",
+                "calificacion_cliente": p.calificacion_cliente,
+                "resena_cliente": p.resena_cliente or "",
                 "mensajes": [{
                     "remitente": m.remitente_tipo,
                     "texto": m.texto,
@@ -1020,6 +1035,7 @@ def solicitar_viaje_o_envio():
                 'origen': origen_texto,
                 'destino': destino_texto,
                 'total_usd': total_usd,
+                'cliente_nombre': usuario.nombre,
                 'latitud_origen': lat_origen,
                 'longitud_origen': lon_origen,
                 'latitud_destino': lat_destino,
@@ -1039,14 +1055,14 @@ def solicitar_viaje_o_envio():
         print("ERROR EN SOLICITAR VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CLIENTE Y DEL REPARTIDOR PARA EL CHAT
+# 👉 RUTA MEJORADA: DEVUELVE TANTO LOS VIAJES COMO CLIENTE Y COMO CONDUCTOR + RESEÑAS PERMANENTES
 @app.route('/api/rides/mis_viajes/<int:usuario_id>', methods=['GET'])
 def obtener_mis_viajes_cliente(usuario_id):
     try:
         if usuario_id > 0:
-            viajes = Pedido.query.filter_by(id_usuario=usuario_id).order_by(Pedido.fecha_creacion.desc()).all()
-            if not viajes:
-                viajes = Pedido.query.order_by(Pedido.fecha_creacion.desc()).limit(15).all()
+            viajes = Pedido.query.filter(
+                or_(Pedido.id_usuario == usuario_id, Pedido.repartidor_id == usuario_id)
+            ).order_by(Pedido.fecha_creacion.desc()).all()
         else:
             viajes = Pedido.query.order_by(Pedido.fecha_creacion.desc()).limit(15).all()
 
@@ -1059,6 +1075,8 @@ def obtener_mis_viajes_cliente(usuario_id):
             
             resultado.append({
                 "id": v.id,
+                "cliente_id": v.id_usuario,
+                "repartidor_id": v.repartidor_id,
                 "direccion_entrega": v.direccion_entrega,
                 "origen": meta.get("origen", "Los Teques"),
                 "destino": meta.get("destino", v.direccion_entrega),
@@ -1077,10 +1095,14 @@ def obtener_mis_viajes_cliente(usuario_id):
                 "longitud_origen": v.longitud_actual or -67.0433,
                 "latitud_destino": v.latitud_destino or 10.3495,
                 "longitud_destino": v.longitud_destino or -67.0401,
-                
                 "cliente_nombre": cliente.nombre if cliente else "Cliente",
                 "usuario_nombre": cliente.nombre if cliente else "Cliente",
-                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor"
+                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor",
+                "calificacion_conductor": v.calificacion_conductor,
+                "resena_conductor": v.resena_conductor or "",
+                "calificacion_cliente": v.calificacion_cliente,
+                "resena_cliente": v.resena_cliente or "",
+                "notificado_conductor_fin": bool(v.notificado_conductor_fin)
             })
         return jsonify(resultado), 200
     except Exception as e:
@@ -1114,32 +1136,193 @@ def cancelar_viaje():
         print("ERROR CANCELANDO VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
+# 👉 NUEVA RUTA PARA CULMINAR VIAJE, GUARDAR VALORACIÓN/RESEÑA DEL CONDUCTOR Y NOTIFICARLE AL INSTANTE
+@app.route('/api/rides/culminar', methods=['POST'])
 @app.route('/api/rides/completar_viaje', methods=['POST'])
 def completar_viaje_driver():
     try:
         datos = request.get_json() or {}
         pedido_id = datos.get('pedido_id')
         repartidor_id = datos.get('repartidor_id')
+        calificacion_conductor = datos.get('calificacion_conductor')
+        resena_conductor = datos.get('resena_conductor')
 
         pedido = Pedido.query.get(pedido_id)
         if not pedido:
             return jsonify({"status": "error", "mensaje": "Viaje no encontrado"}), 404
 
+        ya_estaba_entregado = (pedido.estado == 'entregado')
         pedido.estado = 'entregado'
-        if repartidor_id:
-            conductor = Usuario.query.get(repartidor_id)
+
+        if calificacion_conductor is not None:
+            try:
+                pedido.calificacion_conductor = int(calificacion_conductor)
+            except (ValueError, TypeError):
+                pedido.calificacion_conductor = 5
+
+        if resena_conductor is not None and str(resena_conductor).strip() != "":
+            pedido.resena_conductor = str(resena_conductor).strip()
+
+        # Marca que el conductor debe recibir la notificación de viaje culminado y modal de reseña al cliente
+        pedido.notificado_conductor_fin = False
+
+        id_cond = repartidor_id or pedido.repartidor_id
+        if id_cond and not ya_estaba_entregado:
+            conductor = Usuario.query.get(id_cond)
             if conductor:
                 conductor.viajes_completados = (conductor.viajes_completados or 0) + 1
                 conductor.saldo = (conductor.saldo or 0.0) + float(pedido.total or 0.0)
 
         db.session.commit()
-        return jsonify({"status": "success", "mensaje": "Viaje finalizado con éxito"}), 200
+
+        meta = pedido.datos_pago if isinstance(pedido.datos_pago, dict) else {}
+        destino_limpio = meta.get("destino", pedido.direccion_entrega)
+        cliente = Usuario.query.get(pedido.id_usuario)
+        nombre_cliente = cliente.nombre if cliente else "Cliente"
+
+        socketio.emit('viaje_culminado', {
+            'pedido_id': pedido.id,
+            'repartidor_id': pedido.repartidor_id,
+            'cliente_id': pedido.id_usuario,
+            'cliente_nombre': nombre_cliente,
+            'destino': destino_limpio,
+            'calificacion_conductor': pedido.calificacion_conductor or 5,
+            'resena_conductor': pedido.resena_conductor or ""
+        })
+
+        return jsonify({
+            "status": "success",
+            "mensaje": "Viaje culminado y reseña guardada para siempre en el historial",
+            "destino": destino_limpio,
+            "cliente_nombre": nombre_cliente
+        }), 200
     except Exception as e:
         db.session.rollback()
         print("ERROR EN COMPLETAR VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CLIENTE Y DEL REPARTIDOR PARA EL CHAT
+# 👉 NUEVA RUTA PARA QUE EL CONDUCTOR ACEPTE EL FIN DEL VIAJE Y DEJE SU RESEÑA OPCIONAL AL CLIENTE
+@app.route('/api/rides/resena_cliente', methods=['POST'])
+def guardar_resena_al_cliente():
+    try:
+        datos = request.get_json() or {}
+        pedido_id = datos.get('pedido_id')
+        calificacion_cliente = datos.get('calificacion_cliente')
+        resena_cliente = datos.get('resena_cliente')
+
+        pedido = Pedido.query.get(pedido_id)
+        if not pedido:
+            return jsonify({"status": "error", "mensaje": "Viaje no encontrado"}), 404
+
+        pedido.notificado_conductor_fin = True
+
+        if calificacion_cliente is not None:
+            try:
+                pedido.calificacion_cliente = int(calificacion_cliente)
+            except (ValueError, TypeError):
+                pass
+
+        if resena_cliente is not None and str(resena_cliente).strip() != "":
+            pedido.resena_cliente = str(resena_cliente).strip()
+
+        db.session.commit()
+        return jsonify({
+            "status": "success",
+            "mensaje": "Confirmación y reseña del cliente guardadas en el historial"
+        }), 200
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR GUARDANDO RESEÑA CLIENTE:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+# 👉 NUEVA RUTA: OBTIENE PROMEDIO DE ESTRELLAS, HISTORIAL DE RESEÑAS E INFORMA VIAJES RECIÉN CULMINADOS AL CONDUCTOR
+@app.route('/api/rides/resenas_usuario/<int:usuario_id>', methods=['GET'])
+def obtener_resenas_y_alertas_usuario(usuario_id):
+    try:
+        # 1. Reseñas recibidas como conductor
+        viajes_como_conductor = Pedido.query.filter_by(repartidor_id=usuario_id, estado='entregado').order_by(Pedido.fecha_creacion.desc()).all()
+        resenas_conductor = []
+        suma_estrellas_cond = 0
+        conteo_estrellas_cond = 0
+
+        pendientes_aceptar_fin = []
+
+        for p in viajes_como_conductor:
+            meta = p.datos_pago if isinstance(p.datos_pago, dict) else {}
+            destino_limpio = meta.get("destino", p.direccion_entrega)
+            cli = Usuario.query.get(p.id_usuario)
+            nombre_cli = cli.nombre if cli else "Cliente"
+
+            if p.calificacion_conductor is not None:
+                suma_estrellas_cond += int(p.calificacion_conductor)
+                conteo_estrellas_cond += 1
+
+            if p.calificacion_conductor is not None or (p.resena_conductor and p.resena_conductor.strip()):
+                resenas_conductor.append({
+                    "pedido_id": p.id,
+                    "cliente_nombre": nombre_cli,
+                    "destino": destino_limpio,
+                    "estrellas": p.calificacion_conductor or 5,
+                    "resena": p.resena_conductor or "",
+                    "fecha": p.fecha_creacion.strftime("%d/%m/%Y %H:%M") if p.fecha_creacion else ""
+                })
+
+            if not p.notificado_conductor_fin:
+                pendientes_aceptar_fin.append({
+                    "pedido_id": p.id,
+                    "cliente_id": p.id_usuario,
+                    "cliente_nombre": nombre_cli,
+                    "destino": destino_limpio,
+                    "total": float(p.total or 0.0),
+                    "calificacion_recibida": p.calificacion_conductor or 5,
+                    "resena_recibida": p.resena_conductor or ""
+                })
+
+        promedio_conductor = round(suma_estrellas_cond / conteo_estrellas_cond, 2) if conteo_estrellas_cond > 0 else 5.0
+
+        # 2. Reseñas recibidas como cliente
+        viajes_como_cliente = Pedido.query.filter_by(id_usuario=usuario_id, estado='entregado').order_by(Pedido.fecha_creacion.desc()).all()
+        resenas_cliente = []
+        suma_estrellas_cli = 0
+        conteo_estrellas_cli = 0
+
+        for p in viajes_como_cliente:
+            meta = p.datos_pago if isinstance(p.datos_pago, dict) else {}
+            destino_limpio = meta.get("destino", p.direccion_entrega)
+            cond = Usuario.query.get(p.repartidor_id) if p.repartidor_id else None
+            nombre_cond = cond.nombre if cond else "Conductor"
+
+            if p.calificacion_cliente is not None:
+                suma_estrellas_cli += int(p.calificacion_cliente)
+                conteo_estrellas_cli += 1
+
+            if p.calificacion_cliente is not None or (p.resena_cliente and p.resena_cliente.strip()):
+                resenas_cliente.append({
+                    "pedido_id": p.id,
+                    "conductor_nombre": nombre_cond,
+                    "destino": destino_limpio,
+                    "estrellas": p.calificacion_cliente or 5,
+                    "resena": p.resena_cliente or "",
+                    "fecha": p.fecha_creacion.strftime("%d/%m/%Y %H:%M") if p.fecha_creacion else ""
+                })
+
+        promedio_cliente = round(suma_estrellas_cli / conteo_estrellas_cli, 2) if conteo_estrellas_cli > 0 else 5.0
+
+        return jsonify({
+            "status": "success",
+            "promedio_conductor": promedio_conductor,
+            "total_calificaciones_conductor": conteo_estrellas_cond,
+            "resenas_recibidas_conductor": resenas_conductor,
+            "promedio_cliente": promedio_cliente,
+            "total_calificaciones_cliente": conteo_estrellas_cli,
+            "resenas_recibidas_cliente": resenas_cliente,
+            "viajes_culminados_por_aceptar": pendientes_aceptar_fin
+        }), 200
+    except Exception as e:
+        print("ERROR EN OBTENER RESEÑAS USUARIO:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CLIENTE Y DEL REPARTIDOR PARA EL CHAT + RESEÑAS
 @app.route('/obtener_pedido/<int:pedido_id>', methods=['GET'])
 def obtener_pedido(pedido_id):
     try:
@@ -1147,10 +1330,14 @@ def obtener_pedido(pedido_id):
         if pedido:
             cliente = Usuario.query.get(pedido.id_usuario)
             repartidor = Usuario.query.get(pedido.repartidor_id) if pedido.repartidor_id else None
+            meta = pedido.datos_pago if isinstance(pedido.datos_pago, dict) else {}
             
             return jsonify({
                 "id": pedido.id,
+                "cliente_id": pedido.id_usuario,
+                "repartidor_id": pedido.repartidor_id,
                 "direccion": pedido.direccion_entrega,
+                "destino": meta.get("destino", pedido.direccion_entrega),
                 "estado": pedido.estado,
                 "total": pedido.total,
                 "latitud_actual": pedido.latitud_actual or 10.3444,
@@ -1158,10 +1345,14 @@ def obtener_pedido(pedido_id):
                 "latitud_destino": pedido.latitud_destino or 10.3495,
                 "longitud_destino": pedido.longitud_destino or -67.0401,
                 "datos_pago": pedido.datos_pago,
-                
                 "usuario_nombre": cliente.nombre if cliente else "Cliente",
                 "cliente_nombre": cliente.nombre if cliente else "Cliente",
-                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor"
+                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor",
+                "calificacion_conductor": pedido.calificacion_conductor,
+                "resena_conductor": pedido.resena_conductor or "",
+                "calificacion_cliente": pedido.calificacion_cliente,
+                "resena_cliente": pedido.resena_cliente or "",
+                "notificado_conductor_fin": bool(pedido.notificado_conductor_fin)
             }), 200
         return jsonify({"error": "Pedido no encontrado"}), 404
     except Exception as e:
@@ -1189,7 +1380,6 @@ def pedidos_disponibles():
                 "latitud_destino": p.latitud_destino or 10.3495,
                 "longitud_destino": p.longitud_destino or -67.0401,
                 "datos_pago": p.datos_pago,
-                
                 "usuario_nombre": cliente.nombre if cliente else "Cliente",
                 "cliente_nombre": cliente.nombre if cliente else "Cliente"
             })
@@ -1224,7 +1414,7 @@ def aceptar_pedido(pedido_id=None):
         print("ERROR EN ACEPTAR PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CONDUCTOR AL MAPA DE SEGUIMIENTO DEL CLIENTE
+# 👉 RUTA CORREGIDA: AHORA ENVÍA EL NOMBRE DEL CONDUCTOR Y ESTADO AL MAPA DE SEGUIMIENTO
 @app.route('/estado_pedido/<int:id_pedido>', methods=['GET'])
 def estado_pedido(id_pedido):
     try:
@@ -1232,17 +1422,26 @@ def estado_pedido(id_pedido):
         if pedido:
             cliente = Usuario.query.get(pedido.id_usuario)
             repartidor = Usuario.query.get(pedido.repartidor_id) if pedido.repartidor_id else None
+            meta = pedido.datos_pago if isinstance(pedido.datos_pago, dict) else {}
             
             return jsonify({
                 "id": pedido.id,
                 "estado": pedido.estado,
+                "destino": meta.get("destino", pedido.direccion_entrega),
+                "repartidor_id": pedido.repartidor_id,
+                "cliente_id": pedido.id_usuario,
                 "latitud_actual": pedido.latitud_actual or 10.3444,
                 "longitud_actual": pedido.longitud_actual or -67.0433,
                 "latitud_destino": pedido.latitud_destino or 10.3495,
                 "longitud_destino": pedido.longitud_destino or -67.0401,
-                
                 "usuario_nombre": cliente.nombre if cliente else "Cliente",
-                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor"
+                "cliente_nombre": cliente.nombre if cliente else "Cliente",
+                "repartidor_nombre": repartidor.nombre if repartidor else "Conductor",
+                "calificacion_conductor": pedido.calificacion_conductor,
+                "resena_conductor": pedido.resena_conductor or "",
+                "calificacion_cliente": pedido.calificacion_cliente,
+                "resena_cliente": pedido.resena_cliente or "",
+                "notificado_conductor_fin": bool(pedido.notificado_conductor_fin)
             }), 200
         return jsonify({"mensaje": "Pedido no encontrado"}), 404
     except Exception as e:
@@ -1321,12 +1520,23 @@ def admin_aprobar_pago(pedido_id):
 def historial_viajes(repartidor_id):
     try:
         pedidos = Pedido.query.filter_by(repartidor_id=repartidor_id, estado='entregado').order_by(Pedido.fecha_creacion.desc()).all()
-        return jsonify([{
-            "id": p.id,
-            "direccion": p.direccion_entrega,
-            "total": p.total,
-            "fecha": p.fecha_creacion.strftime("%d/%m/%Y %H:%M")
-        } for p in pedidos]), 200
+        resultado = []
+        for p in pedidos:
+            cli = Usuario.query.get(p.id_usuario)
+            meta = p.datos_pago if isinstance(p.datos_pago, dict) else {}
+            resultado.append({
+                "id": p.id,
+                "direccion": p.direccion_entrega,
+                "destino": meta.get("destino", p.direccion_entrega),
+                "total": p.total,
+                "fecha": p.fecha_creacion.strftime("%d/%m/%Y %H:%M") if p.fecha_creacion else "",
+                "cliente_nombre": cli.nombre if cli else "Cliente",
+                "calificacion_conductor": p.calificacion_conductor,
+                "resena_conductor": p.resena_conductor or "",
+                "calificacion_cliente": p.calificacion_cliente,
+                "resena_cliente": p.resena_cliente or ""
+            })
+        return jsonify(resultado), 200
     except Exception as e:
         print("ERROR EN HISTORIAL:\n", traceback.format_exc(), flush=True)
         return jsonify({"mensaje": str(e)}), 500
