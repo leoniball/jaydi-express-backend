@@ -948,7 +948,7 @@ def finalizar_pedido():
         print(traceback.format_exc(), flush=True)
         return jsonify({"mensaje": f"Error interno: {str(e)}"}), 500
 
-# --- RUTAS REALES PARA JAYDI RIDES (SOLO VIAJES REALES, SIN EJEMPLOS) ---
+# --- RUTAS REALES PARA JAYDI RIDES (CON UBICACIÓN DE RECOGIDA Y DESTINO DEL CLIENTE) ---
 
 @app.route('/api/rides/solicitar', methods=['POST'])
 def solicitar_viaje_o_envio():
@@ -964,7 +964,7 @@ def solicitar_viaje_o_envio():
             return jsonify({"status": "error", "mensaje": "Usuario no encontrado"}), 404
 
         tipo_servicio = datos.get('tipo_servicio', 'Viajes')
-        origen_texto = str(datos.get('origen', 'Los Teques')).strip()
+        origen_texto = str(datos.get('origen', 'Ubicación del cliente')).strip()
         destino_texto = str(datos.get('direccion_entrega', '')).strip()
 
         if not destino_texto or "dirección no registrada" in destino_texto.lower():
@@ -980,10 +980,15 @@ def solicitar_viaje_o_envio():
         fecha_programada = datos.get('fecha_programada')
         hora_programada = datos.get('hora_programada')
 
+        # 👉 PRESERVAMOS LAS COORDENADAS EXACTAS DE DONDE HAY QUE BUSCAR AL CLIENTE Y SU DESTINO
         info_extra = {
             "tipo_servicio": tipo_servicio,
             "origen": origen_texto,
             "destino": destino_texto,
+            "latitud_origen": lat_origen,
+            "longitud_origen": lon_origen,
+            "latitud_destino": lat_destino,
+            "longitud_destino": lon_destino,
             "metodo": datos.get('metodo_pago', 'Pago Móvil'),
             "tasa_bcv": float(datos.get('tasa_bcv', 0.0)),
             "monto_ves": float(datos.get('monto_ves', 0.0)),
@@ -1057,7 +1062,6 @@ def obtener_mis_viajes_cliente(usuario_id):
                 Pedido.estado.in_(['pendiente', 'aceptado', 'en camino', 'agendado'])
             ).order_by(Pedido.fecha_creacion.desc()).all()
         else:
-            # Si no envía parámetro rol, devuelve únicamente los viajes activos o agendados de ese usuario real (sin viajes culminados ni de relleno)
             viajes = Pedido.query.filter(
                 or_(Pedido.id_usuario == usuario_id, Pedido.repartidor_id == usuario_id),
                 Pedido.estado.in_(['pendiente', 'aceptado', 'en camino', 'agendado'])
@@ -1078,7 +1082,7 @@ def obtener_mis_viajes_cliente(usuario_id):
                 "cliente_id": v.id_usuario,
                 "repartidor_id": v.repartidor_id,
                 "direccion_entrega": v.direccion_entrega,
-                "origen": meta.get("origen", "Los Teques"),
+                "origen": meta.get("origen", "Ubicación del cliente"),
                 "destino": meta.get("destino", v.direccion_entrega),
                 "tipo_servicio": meta.get("tipo_servicio", "Viajes"),
                 "metodo_pago": meta.get("metodo", "Pago Móvil"),
@@ -1091,10 +1095,10 @@ def obtener_mis_viajes_cliente(usuario_id):
                 "fecha_programada": meta.get("fecha_programada", ""),
                 "hora_programada": meta.get("hora_programada", ""),
                 "razon_cancelacion": v.razon_cancelacion or "",
-                "latitud_origen": v.latitud_actual or 10.3444,
-                "longitud_origen": v.longitud_actual or -67.0433,
-                "latitud_destino": v.latitud_destino or 10.3495,
-                "longitud_destino": v.longitud_destino or -67.0401,
+                "latitud_origen": float(meta.get("latitud_origen", v.latitud_actual or 10.3444)),
+                "longitud_origen": float(meta.get("longitud_origen", v.longitud_actual or -67.0433)),
+                "latitud_destino": float(meta.get("latitud_destino", v.latitud_destino or 10.3495)),
+                "longitud_destino": float(meta.get("longitud_destino", v.longitud_destino or -67.0401)),
                 "cliente_nombre": cliente.nombre if cliente else "Cliente",
                 "usuario_nombre": cliente.nombre if cliente else "Cliente",
                 "repartidor_nombre": repartidor.nombre if repartidor else "Esperando conductor...",
@@ -1136,7 +1140,6 @@ def cancelar_viaje():
         print("ERROR CANCELANDO VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA PARA CULMINAR VIAJE, GUARDAR VALORACIÓN/RESEÑA DEL CONDUCTOR Y ENVIAR EL VIAJE AL HISTORIAL ADMIN
 @app.route('/api/rides/culminar', methods=['POST'])
 @app.route('/api/rides/completar_viaje', methods=['POST'])
 def completar_viaje_driver():
@@ -1200,7 +1203,6 @@ def completar_viaje_driver():
         print("ERROR EN COMPLETAR VIAJE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA PARA QUE EL CONDUCTOR ACEPTE EL FIN DEL VIAJE Y DEJE SU RESEÑA OPCIONAL AL CLIENTE
 @app.route('/api/rides/resena_cliente', methods=['POST'])
 def guardar_resena_al_cliente():
     try:
@@ -1234,7 +1236,6 @@ def guardar_resena_al_cliente():
         print("ERROR GUARDANDO RESEÑA CLIENTE:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-# 👉 RUTA DE RESEÑAS PERMANENTES Y ALERTAS DE FIN DE VIAJE PARA EL CONDUCTOR
 @app.route('/api/rides/resenas_usuario/<int:usuario_id>', methods=['GET'])
 def obtener_resenas_y_alertas_usuario(usuario_id):
     try:
@@ -1341,7 +1342,10 @@ def obtener_pedido(pedido_id):
                 "cliente_id": pedido.id_usuario,
                 "repartidor_id": pedido.repartidor_id,
                 "direccion": pedido.direccion_entrega,
+                "origen": meta.get("origen", "Ubicación del cliente"),
                 "destino": meta.get("destino", pedido.direccion_entrega),
+                "latitud_origen": float(meta.get("latitud_origen", pedido.latitud_actual or 10.3444)),
+                "longitud_origen": float(meta.get("longitud_origen", pedido.longitud_actual or -67.0433)),
                 "estado": pedido.estado,
                 "total": pedido.total,
                 "latitud_actual": pedido.latitud_actual or 10.3444,
@@ -1363,7 +1367,6 @@ def obtener_pedido(pedido_id):
         print("ERROR EN OBTENER PEDIDO:\n", traceback.format_exc(), flush=True)
         return jsonify({"error": str(e)}), 500
 
-# 👉 RADAR DEL CONDUCTOR: SOLO MUESTRA CARRERAS REALES (FILTRA CUALQUIER VIAJE DE PRUEBA)
 @app.route('/pedidos_disponibles', methods=['GET'])
 @app.route('/api/delivery/pedidos_disponibles', methods=['GET'])
 def pedidos_disponibles():
@@ -1376,15 +1379,18 @@ def pedidos_disponibles():
             if "dirección no registrada" in texto_dir or "direccion no registrada" in texto_dir:
                 continue
 
+            meta = p.datos_pago if isinstance(p.datos_pago, dict) else {}
             cliente = Usuario.query.get(p.id_usuario)
             resultado.append({
                 "id": p.id, 
                 "cliente": p.id_usuario, 
-                "direccion": p.direccion_entrega, 
+                "direccion": p.direccion_entrega,
+                "origen": meta.get("origen", "Ubicación del cliente"),
+                "destino": meta.get("destino", p.direccion_entrega),
                 "total": p.total,
                 "estado": p.estado,
-                "latitud_origen": p.latitud_actual or 10.3444,
-                "longitud_origen": p.longitud_actual or -67.0433,
+                "latitud_origen": float(meta.get("latitud_origen", p.latitud_actual or 10.3444)),
+                "longitud_origen": float(meta.get("longitud_origen", p.longitud_actual or -67.0433)),
                 "latitud_destino": p.latitud_destino or 10.3495,
                 "longitud_destino": p.longitud_destino or -67.0401,
                 "datos_pago": p.datos_pago,
@@ -1434,9 +1440,12 @@ def estado_pedido(id_pedido):
             return jsonify({
                 "id": pedido.id,
                 "estado": pedido.estado,
+                "origen": meta.get("origen", "Ubicación del cliente"),
                 "destino": meta.get("destino", pedido.direccion_entrega),
                 "repartidor_id": pedido.repartidor_id,
                 "cliente_id": pedido.id_usuario,
+                "latitud_origen": float(meta.get("latitud_origen", 10.3444)),
+                "longitud_origen": float(meta.get("longitud_origen", -67.0433)),
                 "latitud_actual": pedido.latitud_actual or 10.3444,
                 "longitud_actual": pedido.longitud_actual or -67.0433,
                 "latitud_destino": pedido.latitud_destino or 10.3495,
@@ -1534,6 +1543,7 @@ def historial_viajes(repartidor_id):
             resultado.append({
                 "id": p.id,
                 "direccion": p.direccion_entrega,
+                "origen": meta.get("origen", "Ubicación del cliente"),
                 "destino": meta.get("destino", p.direccion_entrega),
                 "total": p.total,
                 "fecha": p.fecha_creacion.strftime("%d/%m/%Y %H:%M") if p.fecha_creacion else "",
@@ -1610,12 +1620,9 @@ def obtener_mensajes(pedido_id):
         if not pedido_actual:
             return jsonify([]), 200
 
-        # Si el viaje ya fue culminado, cancelado o aún no tiene conductor asignado, no muestra chat en la app
         if pedido_actual.estado in ['pendiente', 'entregado', 'cancelado'] or not pedido_actual.repartidor_id:
             return jsonify([]), 200
 
-        # Si el conductor que aceptó la carrera ya le había hecho carreras antes a este mismo cliente,
-        # cargamos el historial de mensajes entre ambos. De lo contrario, solo los del viaje actual.
         viajes_en_comun = Pedido.query.filter_by(
             id_usuario=pedido_actual.id_usuario,
             repartidor_id=pedido_actual.repartidor_id
@@ -1752,7 +1759,6 @@ def reset_password():
         print("ERROR EN RESET PASSWORD:\n", traceback.format_exc(), flush=True)
         return jsonify({'error': str(e)}), 500
 
-
 # --- WEBHOOK BANCARIO ---
 
 @app.route('/api/pagos/webhook', methods=['POST'])
@@ -1768,7 +1774,6 @@ def webhook_pagos_banco():
     except Exception as e:
         print("ERROR EN WEBHOOK BANCARIO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
-
 
 if __name__ == '__main__':
     port = int(os.environ.get("PORT", 10000))
