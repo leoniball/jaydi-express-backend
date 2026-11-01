@@ -133,11 +133,13 @@ class Conductor(db.Model):
     cedula_texto = db.Column(db.String(20), unique=True, nullable=False)
     telefono = db.Column(db.String(20), nullable=False)
     direccion = db.Column(db.Text, nullable=False)
+    anio_vehiculo = db.Column(db.Integer, nullable=True) # NUEVO CAMPO AÑO VEHICULO
     cert_medico_key = db.Column(db.String(255), nullable=False)
     licencia_key = db.Column(db.String(255), nullable=False)
     cedula_img_key = db.Column(db.String(255), nullable=False)
     seguro_key = db.Column(db.String(255), nullable=False)
     carnet_circulacion_key = db.Column(db.String(255), nullable=False)
+    video_vehiculo_key = db.Column(db.String(255), nullable=True) # NUEVO CAMPO VIDEO
     estado = db.Column(db.String(20), default='pending') 
     
     banco_pago = db.Column(db.String(100), nullable=True)
@@ -180,7 +182,6 @@ class Pedido(db.Model):
     longitud_destino = db.Column(db.Float, nullable=True)
     datos_pago = db.Column(db.JSON, nullable=True) 
     razon_cancelacion = db.Column(db.Text, nullable=True)
-    # 👉 COLUMNAS PERMANENTES PARA VALORACIONES Y RESEÑAS
     calificacion_conductor = db.Column(db.Integer, nullable=True)
     resena_conductor = db.Column(db.Text, nullable=True)
     calificacion_cliente = db.Column(db.Integer, nullable=True)
@@ -234,6 +235,9 @@ def sincronizar_columnas_bd():
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS banco_pago VARCHAR(100);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS cedula_pago VARCHAR(50);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS telefono_pago VARCHAR(50);",
+        # 👉 ESTAS DOS LÍNEAS GARANTIZAN QUE NEON ACEPTE LOS NUEVOS CAMPOS DEL CONDUCTOR
+        "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS video_vehiculo_key VARCHAR(255);",
+        "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS anio_vehiculo INTEGER;",
         # 👉 LIMPIEZA DEFINITIVA DE VIAJES DE EJEMPLO / DIRECCIÓN NO REGISTRADA EN NEON
         "DELETE FROM mensajes WHERE pedido_id IN (SELECT id FROM pedidos WHERE direccion_entrega ILIKE '%Dirección no registrada%' OR direccion_entrega ILIKE '%Direccion no registrada%');",
         "DELETE FROM pedidos WHERE direccion_entrega ILIKE '%Dirección no registrada%' OR direccion_entrega ILIKE '%Direccion no registrada%';"
@@ -399,6 +403,7 @@ def registrar_conductor_s3():
         if Conductor.query.filter_by(user_id=user_id).first():
             return jsonify({"status": "error", "mensaje": "Este usuario ya tiene una solicitud de conductor"}), 400
 
+        # Subida de documentos e imágenes base
         archivos_requeridos = ['cert_medico', 'licencia', 'cedula_img', 'seguro', 'carnet_circulacion']
         for doc in archivos_requeridos:
             if doc not in request.files or request.files[doc].filename == '':
@@ -412,6 +417,19 @@ def registrar_conductor_s3():
                 return jsonify({"status": "error", "mensaje": f"Error subiendo {doc} a la nube AWS S3"}), 500
             keys[doc] = s3_key
 
+        # Subida obligatoria del Video del Vehículo
+        video_obj = request.files.get('video_vehiculo') or request.files.get('videoVehiculo')
+        if not video_obj or video_obj.filename == '':
+            return jsonify({"status": "error", "mensaje": "Falta el video de inspección del vehículo"}), 400
+        
+        video_s3_key = upload_document_to_s3(video_obj, video_obj.filename)
+        if not video_s3_key:
+            return jsonify({"status": "error", "mensaje": "Error subiendo el video a AWS S3"}), 500
+
+        # Captura del Año del Vehículo
+        anio_vehiculo_raw = request.form.get('anio_vehiculo') or request.form.get('anioVehiculo')
+        anio_vehiculo = int(anio_vehiculo_raw) if anio_vehiculo_raw else None
+
         nuevo_conductor = Conductor(
             user_id=user_id,
             nombres=request.form.get('nombres'),
@@ -419,11 +437,13 @@ def registrar_conductor_s3():
             cedula_texto=request.form.get('cedula_texto'),
             telefono=request.form.get('telefono'),
             direccion=request.form.get('direccion'),
+            anio_vehiculo=anio_vehiculo,
             cert_medico_key=keys['cert_medico'],
             licencia_key=keys['licencia'],
             cedula_img_key=keys['cedula_img'],
             seguro_key=keys['seguro'],
             carnet_circulacion_key=keys['carnet_circulacion'],
+            video_vehiculo_key=video_s3_key,
             estado='pending'
         )
         db.session.add(nuevo_conductor)
@@ -469,23 +489,6 @@ def guardar_datos_pago_conductor():
         print("ERROR EN DATOS PAGO CONDUCTOR:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
-@app.route('/api/drivers/payment_info/<int:user_id>', methods=['GET'])
-def obtener_datos_pago_conductor(user_id):
-    try:
-        conductor = Conductor.query.filter_by(user_id=user_id).first()
-        if not conductor:
-            return jsonify({"status": "error", "mensaje": "Conductor no encontrado"}), 404
-        
-        return jsonify({
-            "status": "success",
-            "banco": conductor.banco_pago or "",
-            "cedula": conductor.cedula_pago or "",
-            "telefono": conductor.telefono_pago or ""
-        }), 200
-    except Exception as e:
-        print("ERROR GET DATOS PAGO:\n", traceback.format_exc(), flush=True)
-        return jsonify({"status": "error", "mensaje": str(e)}), 500
-
 # --- PANEL ADMIN MAESTRO (GUARDA EL HISTORIAL COMPLETO Y CHATS DE TODOS LOS VIAJES CULMINADOS) ---
 
 @app.route('/api/admin/conductores', methods=['GET'])
@@ -508,6 +511,7 @@ def obtener_todos_conductores():
                 "cedula_texto": c.cedula_texto,
                 "telefono": c.telefono,
                 "direccion": c.direccion,
+                "anio_vehiculo": c.anio_vehiculo,
                 "estado": c.estado,
                 "viajes_completados": u.viajes_completados if u else 0,
                 "banco_pago": c.banco_pago or "No registrado",
@@ -518,7 +522,8 @@ def obtener_todos_conductores():
                     "licencia": get_presigned_url(c.licencia_key),
                     "cedula_img": get_presigned_url(c.cedula_img_key),
                     "seguro": get_presigned_url(c.seguro_key),
-                    "carnet_circulacion": get_presigned_url(c.carnet_circulacion_key)
+                    "carnet_circulacion": get_presigned_url(c.carnet_circulacion_key),
+                    "video_vehiculo": get_presigned_url(c.video_vehiculo_key) if c.video_vehiculo_key else None
                 }
             })
         return jsonify(resultado), 200
