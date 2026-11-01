@@ -48,10 +48,10 @@ app.config['SQLALCHEMY_ENGINE_OPTIONS'] = {
 
 db = SQLAlchemy(app)
 
-# --- CONFIGURACIÓN DE SUBIDA DE ARCHIVOS (LOCAL/LEGACY) ---
+# --- CONFIGURACIÓN DE SUBIDA DE ARCHIVOS (SOPORTA VIDEOS DE HASTA 150MB) ---
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_FOLDER = os.path.join(BASE_DIR, 'uploads', 'documentos')
-app.config['MAX_CONTENT_LENGTH'] = 16 * 1024 * 1024 # 16MB Límite
+app.config['MAX_CONTENT_LENGTH'] = 150 * 1024 * 1024  # 150MB Límite para soportar 5 fotos + video de 120MB
 
 if not os.path.exists(UPLOAD_FOLDER):
     os.makedirs(UPLOAD_FOLDER)
@@ -75,7 +75,7 @@ def upload_document_to_s3(file_obj, filename):
     unique_filename = f"{uuid.uuid4().hex}.{ext}"
     content_type, _ = mimetypes.guess_type(filename)
     if not content_type:
-        content_type = 'application/octet-stream'
+        content_type = 'video/mp4' if ext in ('mp4', 'mov', 'avi', 'mkv', 'webm', '3gp') else 'application/octet-stream'
     try:
         s3_client.upload_fileobj(
             file_obj,
@@ -133,13 +133,13 @@ class Conductor(db.Model):
     cedula_texto = db.Column(db.String(20), unique=True, nullable=False)
     telefono = db.Column(db.String(20), nullable=False)
     direccion = db.Column(db.Text, nullable=False)
-    anio_vehiculo = db.Column(db.Integer, nullable=True) # NUEVO CAMPO AÑO VEHICULO
+    anio_vehiculo = db.Column(db.Integer, nullable=True)
     cert_medico_key = db.Column(db.String(255), nullable=False)
     licencia_key = db.Column(db.String(255), nullable=False)
     cedula_img_key = db.Column(db.String(255), nullable=False)
     seguro_key = db.Column(db.String(255), nullable=False)
     carnet_circulacion_key = db.Column(db.String(255), nullable=False)
-    video_vehiculo_key = db.Column(db.String(255), nullable=True) # NUEVO CAMPO VIDEO
+    video_vehiculo_key = db.Column(db.String(255), nullable=True)
     estado = db.Column(db.String(20), default='pending') 
     
     banco_pago = db.Column(db.String(100), nullable=True)
@@ -235,10 +235,8 @@ def sincronizar_columnas_bd():
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS banco_pago VARCHAR(100);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS cedula_pago VARCHAR(50);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS telefono_pago VARCHAR(50);",
-        # 👉 ESTAS DOS LÍNEAS GARANTIZAN QUE NEON ACEPTE LOS NUEVOS CAMPOS DEL CONDUCTOR
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS video_vehiculo_key VARCHAR(255);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS anio_vehiculo INTEGER;",
-        # 👉 LIMPIEZA DEFINITIVA DE VIAJES DE EJEMPLO / DIRECCIÓN NO REGISTRADA EN NEON
         "DELETE FROM mensajes WHERE pedido_id IN (SELECT id FROM pedidos WHERE direccion_entrega ILIKE '%Dirección no registrada%' OR direccion_entrega ILIKE '%Direccion no registrada%');",
         "DELETE FROM pedidos WHERE direccion_entrega ILIKE '%Dirección no registrada%' OR direccion_entrega ILIKE '%Direccion no registrada%';"
     ]
@@ -399,9 +397,6 @@ def registrar_conductor_s3():
         usuario = Usuario.query.get(user_id)
         if not usuario:
             return jsonify({"status": "error", "mensaje": "Usuario principal no encontrado"}), 404
-            
-        if Conductor.query.filter_by(user_id=user_id).first():
-            return jsonify({"status": "error", "mensaje": "Este usuario ya tiene una solicitud de conductor"}), 400
 
         # Subida de documentos e imágenes base
         archivos_requeridos = ['cert_medico', 'licencia', 'cedula_img', 'seguro', 'carnet_circulacion']
@@ -428,30 +423,48 @@ def registrar_conductor_s3():
 
         # Captura del Año del Vehículo
         anio_vehiculo_raw = request.form.get('anio_vehiculo') or request.form.get('anioVehiculo')
-        anio_vehiculo = int(anio_vehiculo_raw) if anio_vehiculo_raw else None
+        anio_vehiculo = int(anio_vehiculo_raw) if (anio_vehiculo_raw and str(anio_vehiculo_raw).isdigit()) else None
 
-        nuevo_conductor = Conductor(
-            user_id=user_id,
-            nombres=request.form.get('nombres'),
-            apellidos=request.form.get('apellidos'),
-            cedula_texto=request.form.get('cedula_texto'),
-            telefono=request.form.get('telefono'),
-            direccion=request.form.get('direccion'),
-            anio_vehiculo=anio_vehiculo,
-            cert_medico_key=keys['cert_medico'],
-            licencia_key=keys['licencia'],
-            cedula_img_key=keys['cedula_img'],
-            seguro_key=keys['seguro'],
-            carnet_circulacion_key=keys['carnet_circulacion'],
-            video_vehiculo_key=video_s3_key,
-            estado='pending'
-        )
-        db.session.add(nuevo_conductor)
+        conductor_existente = Conductor.query.filter_by(user_id=user_id).first()
+
+        if conductor_existente:
+            # Si ya existía (ej. había quedado con video en NULL), actualizamos su registro completo
+            conductor_existente.nombres = request.form.get('nombres') or conductor_existente.nombres
+            conductor_existente.apellidos = request.form.get('apellidos') or conductor_existente.apellidos
+            conductor_existente.cedula_texto = request.form.get('cedula_texto') or conductor_existente.cedula_texto
+            conductor_existente.telefono = request.form.get('telefono') or conductor_existente.telefono
+            conductor_existente.direccion = request.form.get('direccion') or conductor_existente.direccion
+            conductor_existente.anio_vehiculo = anio_vehiculo or conductor_existente.anio_vehiculo
+            conductor_existente.cert_medico_key = keys['cert_medico']
+            conductor_existente.licencia_key = keys['licencia']
+            conductor_existente.cedula_img_key = keys['cedula_img']
+            conductor_existente.seguro_key = keys['seguro']
+            conductor_existente.carnet_circulacion_key = keys['carnet_circulacion']
+            conductor_existente.video_vehiculo_key = video_s3_key
+            conductor_existente.estado = 'pending'
+        else:
+            nuevo_conductor = Conductor(
+                user_id=user_id,
+                nombres=request.form.get('nombres'),
+                apellidos=request.form.get('apellidos'),
+                cedula_texto=request.form.get('cedula_texto'),
+                telefono=request.form.get('telefono'),
+                direccion=request.form.get('direccion'),
+                anio_vehiculo=anio_vehiculo,
+                cert_medico_key=keys['cert_medico'],
+                licencia_key=keys['licencia'],
+                cedula_img_key=keys['cedula_img'],
+                seguro_key=keys['seguro'],
+                carnet_circulacion_key=keys['carnet_circulacion'],
+                video_vehiculo_key=video_s3_key,
+                estado='pending'
+            )
+            db.session.add(nuevo_conductor)
         
         usuario.rol = 'repartidor_s3' 
         
         db.session.commit()
-        return jsonify({"status": "success", "mensaje": "Solicitud de conductor enviada y documentos seguros en S3"}), 201
+        return jsonify({"status": "success", "mensaje": "Solicitud de conductor enviada y documentos/video seguros en S3"}), 201
 
     except Exception as e:
         db.session.rollback()
@@ -487,6 +500,23 @@ def guardar_datos_pago_conductor():
     except Exception as e:
         db.session.rollback()
         print("ERROR EN DATOS PAGO CONDUCTOR:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route('/api/drivers/payment_info/<int:user_id>', methods=['GET'])
+def obtener_datos_pago_conductor(user_id):
+    try:
+        conductor = Conductor.query.filter_by(user_id=user_id).first()
+        if not conductor:
+            return jsonify({"status": "error", "mensaje": "Conductor no encontrado"}), 404
+        
+        return jsonify({
+            "status": "success",
+            "banco": conductor.banco_pago or "",
+            "cedula": conductor.cedula_pago or "",
+            "telefono": conductor.telefono_pago or ""
+        }), 200
+    except Exception as e:
+        print("ERROR GET DATOS PAGO:\n", traceback.format_exc(), flush=True)
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 # --- PANEL ADMIN MAESTRO (GUARDA EL HISTORIAL COMPLETO Y CHATS DE TODOS LOS VIAJES CULMINADOS) ---
