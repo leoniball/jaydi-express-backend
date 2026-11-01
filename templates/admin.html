@@ -489,6 +489,10 @@
 
         contenedor.innerHTML = lista.map(c => {
           const docs = c.documentos || {};
+          
+          // Lógica robusta: Buscar la URL del video en todas las posibles claves que pueda estar usando el backend.
+          const videoUrl = c.video_vehiculo || docs.video_vehiculo || c.video || docs.video || c.video_inspeccion || docs.video_inspeccion;
+
           return `
             <div class="driver-box">
               <div class="driver-info">
@@ -501,13 +505,18 @@
                 ${c.anio_vehiculo ? `<p><strong>Año del Vehículo:</strong> ${c.anio_vehiculo}</p>` : ''}
                 <p><strong>Viajes Culminados:</strong> ${c.viajes_completados}</p>
                 <p><strong>Pago Móvil:</strong> ${c.banco_pago} | CI: ${c.cedula_pago} | Tel: ${c.telefono_pago}</p>
+                
                 <div class="docs-links">
                   ${docs.cedula_img ? `<a class="doc-chip" href="${docs.cedula_img}" target="_blank">🪪 Cédula</a>` : ''}
                   ${docs.licencia ? `<a class="doc-chip" href="${docs.licencia}" target="_blank">🪪 Licencia</a>` : ''}
                   ${docs.cert_medico ? `<a class="doc-chip" href="${docs.cert_medico}" target="_blank">🩺 Cert. Médico</a>` : ''}
                   ${docs.seguro ? `<a class="doc-chip" href="${docs.seguro}" target="_blank">🛡️ RCV</a>` : ''}
                   ${docs.carnet_circulacion ? `<a class="doc-chip" href="${docs.carnet_circulacion}" target="_blank">🚗 Carnet Circ.</a>` : ''}
-                  ${docs.video_vehiculo ? `<a class="doc-chip" href="${docs.video_vehiculo}" target="_blank" style="background:var(--naranja); color:var(--blanco); box-shadow: 0 2px 4px rgba(240,125,0,0.3);">🎥 Video del Vehículo</a>` : ''}
+                  
+                  ${videoUrl 
+                    ? `<a class="doc-chip" href="${videoUrl}" target="_blank" style="background:var(--naranja); color:var(--blanco); box-shadow: 0 2px 4px rgba(240,125,0,0.3);">🎥 Video del Vehículo</a>` 
+                    : `<span class="doc-chip" style="background:#EEEEEE; color:#999; border: 1px dashed #CCC; cursor:help;" title="El backend no devolvió URL del video para este conductor. Revisa si en PostgreSQL/Neon se está guardando correctamente en el JSON de documentos.">🎥 Video no registrado</span>`
+                  }
                 </div>
               </div>
               <div class="driver-actions">
