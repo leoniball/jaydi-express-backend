@@ -501,11 +501,14 @@
                 <p><strong>Viajes Culminados:</strong> ${c.viajes_completados}</p>
                 <p><strong>Pago Móvil:</strong> ${c.banco_pago} | CI: ${c.cedula_pago} | Tel: ${c.telefono_pago}</p>
                 <div class="docs-links">
-                  ${docs.cedula_img ? `<a class="doc-chip" href="${docs.cedula_img}" target="_blank">🪪 Cédula</a>` : ''}
-                  ${docs.licencia ? `<a class="doc-chip" href="${docs.licencia}" target="_blank">🪪 Licencia</a>` : ''}
-                  ${docs.cert_medico ? `<a class="doc-chip" href="${docs.cert_medico}" target="_blank">🩺 Cert. Médico</a>` : ''}
-                  ${docs.seguro ? `<a class="doc-chip" href="${docs.seguro}" target="_blank">🛡️ Seguro</a>` : ''}
-                  ${docs.carnet_circulacion ? `<a class="doc-chip" href="${docs.carnet_circulacion}" target="_blank">🚗 Carnet Circ.</a>` : ''}
+  ${docs.cedula_img ? `<a class="doc-chip" href="${docs.cedula_img}" target="_blank">🪪 Cédula</a>` : ''}
+  ${docs.licencia ? `<a class="doc-chip" href="${docs.licencia}" target="_blank">🪪 Licencia</a>` : ''}
+  ${docs.cert_medico ? `<a class="doc-chip" href="${docs.cert_medico}" target="_blank">🩺 Cert. Médico</a>` : ''}
+  ${docs.seguro ? `<a class="doc-chip" href="${docs.seguro}" target="_blank">🛡️ RCV</a>` : ''}
+  ${docs.carnet_circulacion ? `<a class="doc-chip" href="${docs.carnet_circulacion}" target="_blank">🚗 Carnet Circ.</a>` : ''}
+  <!-- 👉 AGREGA ESTA LÍNEA PARA EL VIDEO DEL VEHÍCULO -->
+  ${docs.video_vehiculo ? `<a class="doc-chip" href="${docs.video_vehiculo}" target="_blank" style="background:#FFF3E0; color:#E65100;">🎥 Ver Video (Vehículo)</a>` : ''}
+</div>
                 </div>
               </div>
               <div class="driver-actions">
