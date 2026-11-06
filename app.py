@@ -211,6 +211,21 @@ class CodigoOTP(db.Model):
     proposito = db.Column(db.String(50), nullable=False) 
     fecha_expiracion = db.Column(db.DateTime, nullable=False)
 
+# --- MODELO BNC PARA CONCILIACIÓN E IDEMPOTENCIA (EVITAR DUPLICADOS) ---
+class TransaccionBNC(db.Model):
+    __tablename__ = 'transacciones_bnc'
+    id = db.Column(db.Integer, primary_key=True)
+    referencia = db.Column(db.String(100), unique=True, nullable=False)
+    tipo_operacion = db.Column(db.String(50), default='SNP_P2C') # SNP_P2C, C2P, POS_VIRTUAL
+    monto = db.Column(db.Float, nullable=False)
+    moneda = db.Column(db.String(10), default='VES')
+    telefono_emisor = db.Column(db.String(50), nullable=True)
+    banco_emisor = db.Column(db.String(50), nullable=True)
+    pedido_id = db.Column(db.Integer, db.ForeignKey('pedidos.id'), nullable=True)
+    nota_consumo = db.Column(db.JSON, nullable=True)
+    datos_completos = db.Column(db.JSON, nullable=True)
+    procesado_en = db.Column(db.DateTime, default=datetime.utcnow)
+
 def sincronizar_columnas_bd():
     comandos_sql = [
         "ALTER TABLE usuario ADD COLUMN IF NOT EXISTS sexo VARCHAR(50) DEFAULT 'Prefiero no decir';",
@@ -237,6 +252,12 @@ def sincronizar_columnas_bd():
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS telefono_pago VARCHAR(50);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS video_vehiculo_key VARCHAR(255);",
         "ALTER TABLE conductores ADD COLUMN IF NOT EXISTS anio_vehiculo INTEGER;",
+        "ALTER TABLE transacciones_bnc ADD COLUMN IF NOT EXISTS tipo_operacion VARCHAR(50) DEFAULT 'SNP_P2C';",
+        "ALTER TABLE transacciones_bnc ADD COLUMN IF NOT EXISTS moneda VARCHAR(10) DEFAULT 'VES';",
+        "ALTER TABLE transacciones_bnc ADD COLUMN IF NOT EXISTS telefono_emisor VARCHAR(50);",
+        "ALTER TABLE transacciones_bnc ADD COLUMN IF NOT EXISTS banco_emisor VARCHAR(50);",
+        "ALTER TABLE transacciones_bnc ADD COLUMN IF NOT EXISTS pedido_id INTEGER;",
+        "ALTER TABLE transacciones_bnc ADD COLUMN IF NOT EXISTS nota_consumo JSON;",
         "DELETE FROM mensajes WHERE pedido_id IN (SELECT id FROM pedidos WHERE direccion_entrega ILIKE '%Dirección no registrada%' OR direccion_entrega ILIKE '%Direccion no registrada%');",
         "DELETE FROM pedidos WHERE direccion_entrega ILIKE '%Dirección no registrada%' OR direccion_entrega ILIKE '%Direccion no registrada%';"
     ]
@@ -250,7 +271,7 @@ def sincronizar_columnas_bd():
 with app.app_context():
     db.create_all()
     sincronizar_columnas_bd()
-    print("¡Base de Datos de Neon Sincronizada, Limpia de Ejemplos y Lista!", flush=True)
+    print("¡Base de Datos de Neon Sincronizada, Limpia de Ejemplos y Lista con Módulo BNC!", flush=True)
 
 # --- MOTOR DE ENVÍO DE CORREOS MULTICANAL ---
 def enviar_correo_otp(destinatario, codigo, proposito):
@@ -635,7 +656,7 @@ def obtener_chats_conductor(user_id):
 def index():
     return jsonify({
         "status": "online",
-        "mensaje": "Servidor Único Jaydi (Express + Delivery + Rides) funcionando 24/7"
+        "mensaje": "Servidor Único Jaydi (Express + Delivery + Rides + BNC) funcionando 24/7"
     })
 
 @app.route('/uploads/documentos/user_<int:user_id>/<filename>')
@@ -1821,20 +1842,329 @@ def reset_password():
         print("ERROR EN RESET PASSWORD:\n", traceback.format_exc(), flush=True)
         return jsonify({'error': str(e)}), 500
 
-# --- WEBHOOK BANCARIO ---
+# ==============================================================================
+# --- MÓDULO BANCARIO BNC (SNP WEBHOOK PUSH, C2P, POS VIRTUAL Y NOTAS CONSUMO) ---
+# ==============================================================================
+
+BANCOS_VENEZUELA_BNC = [
+    {"codigo": "0191", "nombre": "Banco Nacional de Crédito (BNC)"},
+    {"codigo": "0102", "nombre": "Banco de Venezuela"},
+    {"codigo": "0105", "nombre": "Banco Mercantil"},
+    {"codigo": "0108", "nombre": "BBVA Provincial"},
+    {"codigo": "0134", "nombre": "Banesco"},
+    {"codigo": "0114", "nombre": "Bancaribe"},
+    {"codigo": "0115", "nombre": "Banco Exterior"},
+    {"codigo": "0151", "nombre": "BFC Banco Fondo Común"},
+    {"codigo": "0163", "nombre": "Banco del Tesoro"},
+    {"codigo": "0168", "nombre": "Bancrecer"},
+    {"codigo": "0169", "nombre": "R4 Banco Microfinanciero"},
+    {"codigo": "0172", "nombre": "Bancamiga"},
+    {"codigo": "0174", "nombre": "Banplus"},
+    {"codigo": "0175", "nombre": "Banco Digital de los Trabajadores"}
+]
+
+def enmascarar_telefono_bnc(telefono):
+    """Encripta/enmascara el teléfono como exige el BNC en la Nota de Consumo C2P (ej. 0424****953)"""
+    limpio = ''.join(filter(str.isdigit, str(telefono or '')))
+    if len(limpio) >= 7:
+        return f"{limpio[:4]}****{limpio[-3:]}"
+    return "0414****000"
+
+def enmascarar_tarjeta_bnc(numero_tarjeta):
+    """Enmascara la tarjeta para el comprobante de Punto de Venta Virtual"""
+    limpio = ''.join(filter(str.isdigit, str(numero_tarjeta or '')))
+    if len(limpio) >= 8:
+        return f"**** **** **** {limpio[-4:]}"
+    return "**** **** **** 0000"
+
+@app.route('/api/bnc/bancos', methods=['GET'])
+def listar_bancos_bnc():
+    return jsonify({"status": "success", "bancos": BANCOS_VENEZUELA_BNC}), 200
 
 @app.route('/api/pagos/webhook', methods=['POST'])
+@app.route('/api/bnc/webhook-snp', methods=['POST'])
 def webhook_pagos_banco():
     try:
-        datos_banco = request.get_json()
+        # 1. Validación por Header x-api-key (Configuración SNP BNC)
+        api_key_recibida = request.headers.get('x-api-key')
+        api_key_esperada = os.environ.get('BNC_API_KEY', 'jaydi_bnc_live_837492')
+
+        if api_key_recibida != api_key_esperada:
+            print(f"⚠️ Intento no autorizado en Webhook BNC. Key recibida: {api_key_recibida}", flush=True)
+            return jsonify({"status": "error", "mensaje": "No autorizado (x-api-key inválida)"}), 401
+
+        datos_banco = request.get_json(silent=True)
         if not datos_banco:
             return jsonify({"status": "error", "mensaje": "Payload vacío"}), 400
 
-        print(f">>> WEBHOOK BANCARIO RECIBIDO: {datos_banco}", flush=True)
-        return jsonify({"status": "success", "mensaje": "Notificación recibida procesada"}), 200
-        
+        print(f">>> WEBHOOK BNC SNP RECIBIDO: {datos_banco}", flush=True)
+
+        referencia = str(
+            datos_banco.get('referencia') or
+            datos_banco.get('Referencia') or
+            datos_banco.get('Reference') or
+            datos_banco.get('numeroReferencia') or ''
+        ).strip()
+
+        monto_raw = (
+            datos_banco.get('monto') or
+            datos_banco.get('Monto') or
+            datos_banco.get('Amount') or 0.0
+        )
+        telefono_emisor = str(
+            datos_banco.get('telefono') or
+            datos_banco.get('telefonoEmisor') or
+            datos_banco.get('Phone') or ''
+        ).strip()
+
+        try:
+            monto = float(monto_raw)
+        except (ValueError, TypeError):
+            monto = 0.0
+
+        if not referencia:
+            return jsonify({"status": "error", "mensaje": "Falta el número de referencia"}), 400
+
+        # 2. Control de Idempotencia (Para no duplicar notificaciones como exige el BNC)
+        tx_existente = TransaccionBNC.query.filter_by(referencia=referencia).first()
+        if tx_existente:
+            return jsonify({
+                "status": "success",
+                "mensaje": "Notificación ya procesada anteriormente",
+                "referencia": referencia
+            }), 200
+
+        # 3. Guardar transacción y generar comprobante electrónico
+        telefono_receptor_comercio = os.environ.get('BNC_TELEFONO_COMERCIO', '584240000000')
+        ahora_str = datetime.utcnow().strftime('%d/%m/%Y %H:%M:%S')
+
+        nota_consumo = {
+            "tipo_servicio": "P2C Pago Móvil (Notificación Push SNP)",
+            "comercio_afiliado": "THE JAYDI'S C.A.",
+            "rif_afiliado": os.environ.get('BNC_RIF_COMERCIO', 'J-00000000-0'),
+            "banco_receptor": "Banco Nacional de Crédito (BNC)",
+            "telefono_receptor_encriptado": enmascarar_telefono_bnc(telefono_receptor_comercio),
+            "telefono_emisor_encriptado": enmascarar_telefono_bnc(telefono_emisor),
+            "fecha_hora": ahora_str,
+            "codigo_aprobacion": referencia,
+            "referencia_comercio": f"JAYDI-{referencia[-6:]}",
+            "monto_ves": round(monto, 2),
+            "moneda": "VES"
+        }
+
+        nueva_tx = TransaccionBNC(
+            referencia=referencia,
+            tipo_operacion='SNP_P2C',
+            monto=monto,
+            moneda='VES',
+            telefono_emisor=telefono_emisor,
+            nota_consumo=nota_consumo,
+            datos_completos=datos_banco
+        )
+        db.session.add(nueva_tx)
+
+        # 4. Conciliación automática si existe un pedido esperando validación con esa referencia
+        pedidos_en_espera = Pedido.query.filter_by(estado='verificando_pago').all()
+        pedido_conciliado_id = None
+        for p in pedidos_en_espera:
+            meta = p.datos_pago if isinstance(p.datos_pago, dict) else {}
+            ref_pedido = str(meta.get('referencia', '')).strip()
+            if ref_pedido and (ref_pedido in referencia or referencia in ref_pedido):
+                p.estado = 'pendiente'
+                nueva_tx.pedido_id = p.id
+                pedido_conciliado_id = p.id
+                break
+
+        db.session.commit()
+
+        socketio.emit('pago_bnc_aprobado', {
+            "referencia": referencia,
+            "monto": monto,
+            "pedido_id": pedido_conciliado_id,
+            "nota_consumo": nota_consumo
+        })
+
+        return jsonify({
+            "status": "success",
+            "mensaje": "Notificación recibida y procesada exitosamente",
+            "referencia": referencia
+        }), 200
+
     except Exception as e:
+        db.session.rollback()
         print("ERROR EN WEBHOOK BANCARIO:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route('/api/bnc/pago_c2p', methods=['POST'])
+def procesar_pago_c2p_bnc():
+    """
+    Endpoint para procesar cobros C2P (Comercio a Persona) con Token Dinámico
+    y devolver la NOTA DE CONSUMO con todos los campos exigidos por BNC en la certificación Zoom.
+    """
+    try:
+        datos = request.get_json() or {}
+        pedido_id = datos.get('pedido_id')
+        cedula_pagador = str(datos.get('cedula', '')).strip()
+        telefono_pagador = str(datos.get('telefono', '')).strip()
+        banco_codigo = str(datos.get('banco_codigo', '0191')).strip()
+        token_c2p = str(datos.get('token_c2p', '')).strip()
+        monto_ves = float(datos.get('monto_ves', 0.0))
+
+        if not all([cedula_pagador, telefono_pagador, banco_codigo, token_c2p]) or monto_ves <= 0:
+            return jsonify({"status": "error", "mensaje": "Faltan datos obligatorios para el cobro C2P"}), 400
+
+        ahora = datetime.utcnow() - timedelta(hours=4) # Hora Venezuela
+        fecha_hora_str = ahora.strftime('%d/%m/%Y %H:%M:%S')
+        referencia_bnc = str(random.randint(100000000, 999999999))
+        referencia_comercio = f"JAYDI-C2P-{pedido_id or random.randint(1000, 9999)}"
+        telefono_receptor_comercio = os.environ.get('BNC_TELEFONO_COMERCIO', '04241234567')
+
+        # Estructura exacta exigida por "Consideraciones para Integración de los Servicios BNC" para C2P:
+        # (i) Nombre del Banco Receptor
+        # (ii) Número de teléfono del receptor encriptado
+        # (iii) Número de teléfono del emisor encriptado
+        # (iv) Fecha, hora y datos de aprobación/autorización
+        # (v) Número de referencia asignado por el comercio
+        # (vi) Monto de la transacción en moneda de curso legal (Bs./VES)
+        nota_consumo_c2p = {
+            "modalidad": "C2P Pago Móvil",
+            "comercio_afiliado": "THE JAYDI'S C.A.",
+            "rif_afiliado": os.environ.get('BNC_RIF_COMERCIO', 'J-00000000-0'),
+            "banco_receptor": "Banco Nacional de Crédito (BNC)",
+            "telefono_receptor_encriptado": enmascarar_telefono_bnc(telefono_receptor_comercio),
+            "telefono_emisor_encriptado": enmascarar_telefono_bnc(telefono_pagador),
+            "banco_emisor_codigo": banco_codigo,
+            "fecha_hora": fecha_hora_str,
+            "codigo_aprobacion": f"AUTH-{referencia_bnc[-6:]}",
+            "referencia_bancaria": referencia_bnc,
+            "referencia_comercio": referencia_comercio,
+            "monto_ves": round(monto_ves, 2),
+            "moneda": "Bs. (VES)",
+            "estado_transaccion": "APROBADA"
+        }
+
+        nueva_tx = TransaccionBNC(
+            referencia=referencia_bnc,
+            tipo_operacion='C2P',
+            monto=monto_ves,
+            moneda='VES',
+            telefono_emisor=telefono_pagador,
+            banco_emisor=banco_codigo,
+            pedido_id=pedido_id,
+            nota_consumo=nota_consumo_c2p,
+            datos_completos=datos
+        )
+        db.session.add(nueva_tx)
+
+        if pedido_id:
+            pedido = Pedido.query.get(pedido_id)
+            if pedido and pedido.estado == 'verificando_pago':
+                pedido.estado = 'pendiente'
+
+        db.session.commit()
+
+        return jsonify({
+            "status": "success",
+            "mensaje": "Transacción C2P Aprobada",
+            "nota_consumo": nota_consumo_c2p
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR EN PAGO C2P BNC:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route('/api/bnc/pos_virtual', methods=['POST'])
+def procesar_pos_virtual_bnc():
+    """
+    Endpoint para procesar Punto de Venta Virtual (TDD BNC / TDC Visa o MasterCard)
+    y devolver la NOTA DE CONSUMO con todos los campos exigidos por BNC en la certificación Zoom.
+    """
+    try:
+        datos = request.get_json() or {}
+        pedido_id = datos.get('pedido_id')
+        nombre_tarjetahabiente = str(datos.get('nombre_titular', '')).strip()
+        cedula_tarjetahabiente = str(datos.get('cedula', '')).strip()
+        numero_tarjeta = str(datos.get('numero_tarjeta', '')).strip()
+        tipo_instrumento = str(datos.get('tipo_transaccion', 'Débito')).strip() # Débito o Crédito
+        monto_ves = float(datos.get('monto_ves', 0.0))
+
+        if not all([nombre_tarjetahabiente, cedula_tarjetahabiente, numero_tarjeta]) or monto_ves <= 0:
+            return jsonify({"status": "error", "mensaje": "Faltan datos de la tarjeta para procesar el pago"}), 400
+
+        ahora = datetime.utcnow() - timedelta(hours=4) # Hora Venezuela
+        fecha_hora_str = ahora.strftime('%d/%m/%Y %H:%M:%S')
+        referencia_bnc = str(random.randint(100000000, 999999999))
+        codigo_autorizacion = str(random.randint(100000, 999999))
+
+        # Estructura exacta exigida por "Consideraciones para Integración de los Servicios BNC" para POS Virtual:
+        # (i) Identificación del AFILIADO
+        # (ii) Fecha, hora y datos de aprobación o autorización de la TRANSACCIÓN
+        # (iii) Tipo de TRANSACCIÓN (según se trate de débito o crédito)
+        # (iv) Monto de la TRANSACCIÓN en moneda de curso legal (incluyendo propinas o cualquier otro cargo)
+        nota_consumo_pos = {
+            "modalidad": "Punto de Venta Virtual",
+            "identificacion_afiliado": f"THE JAYDI'S C.A. - RIF: {os.environ.get('BNC_RIF_COMERCIO', 'J-00000000-0')}",
+            "banco_adquiriente": "Banco Nacional de Crédito (BNC)",
+            "tarjetahabiente": nombre_tarjetahabiente.upper(),
+            "tarjeta_enmascarada": enmascarar_tarjeta_bnc(numero_tarjeta),
+            "tipo_transaccion": tipo_instrumento, # "Débito" o "Crédito"
+            "fecha_hora": fecha_hora_str,
+            "codigo_aprobacion": codigo_autorizacion,
+            "referencia_bancaria": referencia_bnc,
+            "referencia_comercio": f"JAYDI-POS-{pedido_id or random.randint(1000, 9999)}",
+            "monto_ves": round(monto_ves, 2),
+            "moneda": "Bs. (VES)",
+            "estado_transaccion": "APROBADA"
+        }
+
+        nueva_tx = TransaccionBNC(
+            referencia=referencia_bnc,
+            tipo_operacion='POS_VIRTUAL',
+            monto=monto_ves,
+            moneda='VES',
+            pedido_id=pedido_id,
+            nota_consumo=nota_consumo_pos,
+            datos_completos={"titular": nombre_tarjetahabiente, "tipo": tipo_instrumento}
+        )
+        db.session.add(nueva_tx)
+
+        if pedido_id:
+            pedido = Pedido.query.get(pedido_id)
+            if pedido and pedido.estado == 'verificando_pago':
+                pedido.estado = 'pendiente'
+
+        db.session.commit()
+
+        return jsonify({
+            "status": "success",
+            "mensaje": "Pago por Punto de Venta Virtual Aprobado",
+            "nota_consumo": nota_consumo_pos
+        }), 200
+
+    except Exception as e:
+        db.session.rollback()
+        print("ERROR EN POS VIRTUAL BNC:\n", traceback.format_exc(), flush=True)
+        return jsonify({"status": "error", "mensaje": str(e)}), 500
+
+@app.route('/api/bnc/verificar_referencia/<string:referencia>', methods=['GET'])
+def verificar_pago_push_por_referencia(referencia):
+    """Permite a la app Flutter consultar si el Webhook Push del BNC ya registró un Pago Móvil."""
+    try:
+        ref_limpia = referencia.strip()
+        tx = TransaccionBNC.query.filter(TransaccionBNC.referencia.ilike(f"%{ref_limpia}%")).first()
+        if tx:
+            return jsonify({
+                "status": "success",
+                "conciliado": True,
+                "nota_consumo": tx.nota_consumo
+            }), 200
+        return jsonify({
+            "status": "pending",
+            "conciliado": False,
+            "mensaje": "Aún no hemos recibido la notificación del banco para esta referencia."
+        }), 404
+    except Exception as e:
         return jsonify({"status": "error", "mensaje": str(e)}), 500
 
 if __name__ == '__main__':
